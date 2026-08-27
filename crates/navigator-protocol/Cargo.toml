@@ -1,0 +1,19 @@
+[package]
+name = "navigator-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+navigator-domain.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

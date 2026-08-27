@@ -1,0 +1,68 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/navigator-domain",
+  "crates/navigator-protocol",
+  "crates/navigator-conformance",
+  "crates/navigator-store-api",
+  "crates/navigator-store-sqlite",
+  "crates/navigator-core",
+  "crates/navigator-consumer-protocol",
+  "crates/navigator-driver-protocol",
+  "crates/navigator-driver-client",
+  "crates/navigator-driver-fake",
+  "crates/navigator-supervisor",
+  "crates/navigator-local",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+rust-version = "1.85"
+
+[workspace.dependencies]
+navigator-domain = { path = "crates/navigator-domain", version = "=0.1.0" }
+navigator-conformance = { path = "crates/navigator-conformance", version = "=0.1.0" }
+navigator-consumer-protocol = { path = "crates/navigator-consumer-protocol", version = "=0.1.0" }
+navigator-driver-protocol = { path = "crates/navigator-driver-protocol", version = "=0.1.0" }
+navigator-driver-client = { path = "crates/navigator-driver-client", version = "=0.1.0" }
+navigator-driver-fake = { path = "crates/navigator-driver-fake", version = "=0.1.0" }
+navigator-core = { path = "crates/navigator-core", version = "=0.1.0" }
+navigator-supervisor = { path = "crates/navigator-supervisor", version = "=0.1.0" }
+navigator-local = { path = "crates/navigator-local", version = "=0.1.0" }
+navigator-store-api = { path = "crates/navigator-store-api", version = "=0.1.0" }
+navigator-store-sqlite = { path = "crates/navigator-store-sqlite", version = "=0.1.0" }
+clap = { version = "=4.6.6", default-features = false, features = ["derive", "error-context", "help", "std", "usage"] }
+command-fds = { version = "=0.3.3", default-features = false }
+hmac = { version = "=0.12.1", default-features = false }
+prost = { version = "=0.14.4", default-features = false, features = ["derive", "std"] }
+nix = { version = "=0.30.1", default-features = false, features = ["process", "signal", "term", "fs", "user"] }
+protoc-bin-vendored = { version = "=3.2.0", default-features = false }
+proptest = { version = "=1.11.0", default-features = false, features = ["bit-set", "fork", "std", "timeout"] }
+serde = { version = "=1.0.229", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "=1.0.151", default-features = false, features = ["std"] }
+sha2 = { version = "=0.10.9", default-features = false, features = ["std"] }
+static_assertions = { version = "=1.1.0", default-features = false }
+sqlx = { version = "=0.9.0", default-features = false, features = ["runtime-tokio", "sqlite"] }
+tempfile = { version = "=3.27.0", default-features = false }
+subtle = { version = "=2.6.1", default-features = false, features = ["std"] }
+thiserror = { version = "=2.0.20", default-features = false, features = ["std"] }
+time = { version = "=0.3.55", default-features = false, features = ["macros", "serde", "std"] }
+tokio = { version = "=1.53.1", default-features = false, features = ["macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-stream = { version = "=0.1.19", default-features = false, features = ["net"] }
+tracing = { version = "=0.1.44", default-features = false, features = ["attributes", "std"] }
+tonic = { version = "=0.14.6", default-features = false, features = ["codegen", "transport"] }
+tonic-prost = { version = "=0.14.6", default-features = false }
+tonic-prost-build = { version = "=0.14.6", default-features = false, features = ["transport"] }
+uuid = { version = "=1.25.0", default-features = false, features = ["serde", "std"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

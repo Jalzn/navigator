@@ -1,0 +1,28 @@
+[package]
+name = "navigator-supervisor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+navigator-domain.workspace = true
+navigator-driver-client.workspace = true
+navigator-driver-protocol.workspace = true
+navigator-store-api.workspace = true
+command-fds.workspace = true
+hmac.workspace = true
+nix.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+navigator-store-sqlite.workspace = true
+tempfile.workspace = true
+time.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

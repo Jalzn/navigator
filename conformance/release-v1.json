@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "release_name": "navigator-local-v0.1.0",
+  "release_status": "blocked",
+  "blocking_tasks": [
+    "plans/12-hardening/02-security-compatibility.md",
+    "plans/12-hardening/03-fault-matrix.md"
+  ],
+  "supported_platforms": [
+    {"os": "macos", "arch": "aarch64", "transport": "unix-domain-socket"}
+  ],
+  "unsupported_until_ci_evidence": [
+    {"os": "linux", "arch": "x86_64", "reason": "bundle lifecycle has no current CI evidence"}
+  ],
+  "protocols": {
+    "consumer": {"major": 1, "minimum_minor": 0, "maximum_minor_source": "crates/navigator-consumer-protocol/src/lib.rs"},
+    "driver": {"major": 1, "minimum_minor": 0, "maximum_minor_source": "crates/navigator-driver-protocol/src/lib.rs"},
+    "store": {"current_schema_source": "crates/navigator-store-sqlite/src/database.rs", "upgrade_fixture": 18}
+  },
+  "capabilities_source": "crates/navigator-consumer-protocol/src/lib.rs",
+  "bundle": {
+    "rust_binaries": ["navigatord", "navigatorctl"],
+    "pi_driver": "packages/navigator-driver-pi",
+    "python_sdk": "packages/navigator-python",
+    "migrations": "crates/navigator-store-sqlite/migrations",
+    "schemas": [
+      "crates/navigator-consumer-protocol/proto",
+      "crates/navigator-driver-protocol/proto"
+    ],
+    "required_evidence": ["summary.json", "licenses.json", "sbom.cdx.json", "secret-scan.json"]
+  },
+  "release_oracles": [
+    {"claim": "install-and-restart", "evidence": "lifecycle_replay_and_subscription_survive_a_real_process_restart", "command": ["cargo", "test", "-p", "navigator-local", "--test", "acceptance", "lifecycle_replay_and_subscription_survive_a_real_process_restart", "--locked"]},
+    {"claim": "upgrade-v18-v20", "evidence": "release_upgrade_v18_to_v20_preserves_compatible_session", "command": ["cargo", "test", "-p", "navigator-store-sqlite", "release_upgrade_v18_to_v20_preserves_compatible_session", "--locked"]},
+    {"claim": "incompatible-template-reset", "evidence": "reset_accepts_a_new_incompatible_specification", "command": ["cargo", "test", "-p", "navigator-store-sqlite", "reset_", "--locked"]},
+    {"claim": "pi-hierarchy-failure-recovery-shutdown", "evidence": "controller_persists_and_runs_real_pi_coordinator_campaign_worker_tree", "command": ["cargo", "test", "-p", "navigator-driver-fake", "--test", "pi_controller_tree", "--locked"]},
+    {"claim": "no-process-socket-leaks", "evidence": "external_shutdown_fault_matrix_reopens_and_reconciles_owned_session", "command": ["cargo", "test", "-p", "navigator-local", "--features", "fault-injection", "--test", "acceptance", "external_shutdown_fault_matrix_reopens_and_reconciles_owned_session", "--locked"]}
+  ],
+  "critical_mutation_manifest": "conformance/release-critical-mutations-v1.json"
+  ,"traceability_manifest": "conformance/release-traceability-v1.json"
+}

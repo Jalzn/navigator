@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "evidence": [
+    {"test": "lifecycle_replay_and_subscription_survive_a_real_process_restart", "source": "crates/navigator-local/tests/acceptance.rs", "guarantees": ["NAV-DEPLOY-001", "NAV-TRANSPORT-001", "NAV-DOC-001"]},
+    {"test": "rejected_boundary_inputs_have_no_persistent_effect", "source": "crates/navigator-local/tests/acceptance.rs", "guarantees": ["NAV-BOUNDARY-001", "NAV-CONTROL-002"]},
+    {"test": "controller_persists_and_runs_real_pi_coordinator_campaign_worker_tree", "source": "crates/navigator-driver-fake/tests/pi_controller_tree.rs", "guarantees": ["NAV-CONTROL-001", "NAV-DRIVER-001", "NAV-ADAPTER-001"]},
+    {"test": "trusted_pi_cold_start_longer_than_five_seconds_reaches_ready_and_spawns", "source": "crates/navigator-driver-fake/tests/pi_controller_tree.rs", "guarantees": ["NAV-READINESS-001"]},
+    {"test": "lifecycle_and_event_are_one_atomic_commit", "source": "crates/navigator-store-sqlite/src/tests.rs", "guarantees": ["NAV-STORE-001"]},
+    {"test": "stale_close_and_renew_cannot_mutate_after_takeover", "source": "crates/navigator-store-sqlite/src/tests.rs", "guarantees": ["NAV-IDEMPOTENCY-001", "NAV-IDEMPOTENCY-002", "NAV-IDENTITY-001"]},
+    {"test": "tool_recovery_matrix_marks_only_unsafe_effect_classes_uncertain", "source": "crates/navigator-store-sqlite/src/tests.rs", "guarantees": ["NAV-RECOVERY-001"]},
+    {"test": "queued_report_correlation_is_rejected_and_accepted_causal_message_is_allowed", "source": "crates/navigator-store-sqlite/src/tests.rs", "guarantees": ["NAV-ACCEPT-001", "NAV-MAILBOX-001"]},
+    {"test": "release_traceability_is_bidirectional", "source": "scripts/test-release-gate.py", "guarantees": ["NAV-TRACE-001"]}
+  ]
+}

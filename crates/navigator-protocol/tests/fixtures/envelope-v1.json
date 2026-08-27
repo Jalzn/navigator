@@ -1,0 +1,10 @@
+{
+  "version": {"major": 1, "minor": 0},
+  "envelope_id": "00000000-0000-0000-0000-000000000001",
+  "message_type": "test.command.v1",
+  "request_id": "00000000-0000-0000-0000-000000000002",
+  "correlation_id": null,
+  "required_features": ["durable_acceptance.v1"],
+  "payload": {"task": "semantic-fixture"},
+  "future_optional_field": "ignored"
+}

@@ -1,0 +1,22 @@
+[package]
+name = "navigator-domain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+time.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+serde_json.workspace = true
+static_assertions.workspace = true
+
+[lints]
+workspace = true

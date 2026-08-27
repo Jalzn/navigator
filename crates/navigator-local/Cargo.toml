@@ -1,0 +1,43 @@
+[package]
+name = "navigator-local"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+# Enables only the named subprocess abort hooks used by the closed fault
+# matrix. Release/runtime builds do not enable this feature.
+fault-injection = []
+
+[dependencies]
+clap.workspace = true
+navigator-consumer-protocol.workspace = true
+navigator-core.workspace = true
+navigator-domain.workspace = true
+navigator-driver-client.workspace = true
+navigator-driver-protocol.workspace = true
+navigator-supervisor.workspace = true
+navigator-store-api.workspace = true
+navigator-store-sqlite.workspace = true
+nix.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tonic.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+prost.workspace = true
+sqlx.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

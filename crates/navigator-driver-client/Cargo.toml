@@ -1,0 +1,22 @@
+[package]
+name = "navigator-driver-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+autotests = false
+
+[features]
+uds-process-tests = []
+
+[dependencies]
+navigator-driver-protocol.workspace = true
+prost.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

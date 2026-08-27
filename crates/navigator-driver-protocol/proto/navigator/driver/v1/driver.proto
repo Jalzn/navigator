@@ -1,0 +1,231 @@
+syntax = "proto3";
+package navigator.driver.v1;
+
+message ProtocolRange { uint32 minimum = 1; uint32 maximum = 2; }
+message CapabilityParameter { string key = 1; string value = 2; }
+message Capability { string id = 1; uint32 version = 2; repeated CapabilityParameter parameters = 3; }
+message CapabilityRequirement { string id = 1; uint32 minimum_version = 2; repeated CapabilityParameter parameters = 3; }
+
+message Authentication {
+  bytes key_id = 1;
+  bytes nonce = 2;
+  int64 expires_unix_ms = 3;
+  bytes authenticator = 4;
+  bytes request_digest = 5;
+}
+message RequestMetadata {
+  uint32 protocol_version = 1;
+  Authentication authentication = 2;
+  repeated CapabilityRequirement required_capabilities = 3;
+  bytes request_id = 4;
+}
+message MutationMetadata { RequestMetadata request = 1; }
+message InstanceIdentity {
+  bytes driver_id = 1;
+  bytes participant_id = 2;
+  bytes launch_attempt_id = 3;
+  bytes instance_id = 4;
+  bytes session_id = 5;
+  uint64 ownership_epoch = 6;
+}
+
+enum FailureCode {
+  FAILURE_CODE_UNSPECIFIED = 0; VALIDATION = 1; AUTHENTICATION = 2;
+  AUTHORIZATION = 3; CONFLICT = 4; CAPACITY = 5; TIMEOUT = 6;
+  UNAVAILABLE = 7; UNSUPPORTED = 8; INCOMPATIBLE = 9; CANCELLED = 10;
+  UNCERTAIN_EFFECT = 11; CLEANUP_REQUIRED = 12; CORRUPTED_STATE = 13;
+  INTERNAL = 14;
+}
+message Failure { FailureCode code = 1; string message = 2; bool retryable = 3; }
+
+message DescribeRequest { RequestMetadata metadata = 1; }
+message DescribeResult {
+  bytes driver_id = 1; string implementation = 2; string implementation_version = 3;
+  ProtocolRange protocol = 4; repeated Capability capabilities = 5;
+}
+message DescribeResponse { oneof result { DescribeResult success = 1; Failure failure = 2; } bytes in_reply_to = 3; }
+message StartRequest {
+  MutationMetadata metadata = 1; bytes participant_id = 2; bytes launch_attempt_id = 3;
+  bytes trusted_configuration = 4;
+  bytes session_id = 5; uint64 ownership_epoch = 6;
+  bytes instance_id = 7;
+}
+enum StartDisposition { START_DISPOSITION_UNSPECIFIED = 0; STARTED = 1; START_UNKNOWN = 3; }
+message StartResult { StartDisposition disposition = 1; InstanceIdentity instance = 2; }
+message StartResponse { oneof result { StartResult success = 1; Failure failure = 2; } bytes in_reply_to = 3; }
+
+message InspectRequest { RequestMetadata metadata = 1; InstanceIdentity instance = 2; }
+enum InstanceState { INSTANCE_STATE_UNSPECIFIED = 0; STARTING = 1; READY = 2; IDLE = 3; BUSY = 4; DISCONNECTED = 5; STOPPED = 6; FAILED = 7; INSTANCE_UNCERTAIN = 8; }
+message InspectResult { InstanceState state = 1; uint64 last_event_sequence = 2; }
+message InspectResponse { oneof result { InspectResult success = 1; Failure failure = 2; } bytes in_reply_to = 3; }
+
+message Correlation { bytes correlation_id = 1; bytes parent_message_id = 2; }
+message DeliverRequest {
+  MutationMetadata metadata = 1; InstanceIdentity instance = 2; bytes message_id = 3;
+  bytes operation_id = 4; bytes payload = 5; repeated Correlation pending_correlations = 6;
+  bytes delivery_attempt_id = 7;
+}
+enum Acceptance { ACCEPTANCE_UNSPECIFIED = 0; ACCEPTED = 1; NOT_ACCEPTED = 2; ACCEPTANCE_UNKNOWN = 3; }
+message DeliverResult {
+  Acceptance acceptance = 1;
+  bytes message_id = 2;
+  bytes delivery_attempt_id = 3;
+}
+message DeliverResponse { oneof result { DeliverResult success = 1; Failure failure = 2; } bytes in_reply_to = 3; }
+message AcceptanceRequest { RequestMetadata metadata = 1; InstanceIdentity instance = 2; bytes message_id = 3; bytes delivery_attempt_id = 4; }
+message AcceptanceResult { Acceptance acceptance = 1; bytes delivery_attempt_id = 2; }
+message AcceptanceResponse { oneof result { AcceptanceResult success = 1; Failure failure = 2; } bytes in_reply_to = 3; }
+
+message CancelRequest { MutationMetadata metadata = 1; InstanceIdentity instance = 2; bytes operation_id = 3; }
+enum CancelDisposition { CANCEL_DISPOSITION_UNSPECIFIED = 0; CANCEL_REQUESTED = 1; ALREADY_TERMINAL = 2; CANCEL_UNKNOWN = 3; }
+message CancelResult { CancelDisposition disposition = 1; }
+message CancelResponse { oneof result { CancelResult success = 1; Failure failure = 2; } bytes in_reply_to = 3; }
+message StopRequest { MutationMetadata metadata = 1; InstanceIdentity instance = 2; }
+enum StopDisposition { STOP_DISPOSITION_UNSPECIFIED = 0; STOPPED_CONFIRMED = 1; ALREADY_STOPPED = 2; STOP_UNCERTAIN = 3; STOP_CLEANUP_REQUIRED = 4; }
+message StopResult { StopDisposition disposition = 1; }
+message StopResponse { oneof result { StopResult success = 1; Failure failure = 2; } bytes in_reply_to = 3; }
+
+message ObserveRequest { RequestMetadata metadata = 1; InstanceIdentity instance = 2; uint64 after_sequence = 3; }
+message NoEvent {}
+message ObserveResponse {
+  oneof result { DriverEvent event = 1; NoEvent no_event = 2; }
+  bytes in_reply_to = 3;
+}
+message RemindRequest { MutationMetadata metadata = 1; InstanceIdentity instance = 2; bytes operation_id = 3; bytes message_id = 4; }
+enum RemindDisposition { REMIND_DISPOSITION_UNSPECIFIED = 0; REMINDER_REQUESTED = 1; }
+message RemindResult { RemindDisposition disposition = 1; }
+message RemindResponse { oneof result { RemindResult success = 1; Failure failure = 2; } bytes in_reply_to = 3; }
+message Ready { repeated Capability capabilities = 1; }
+enum ReportKind { REPORT_KIND_UNSPECIFIED = 0; PROGRESS = 1; QUESTION = 2; BLOCKED = 3; SUCCEEDED = 4; REPORT_FAILED = 5; REPORT_CANCELLED = 6; REPORT_UNCERTAIN = 7; }
+message ReportOutcome { ReportKind kind = 1; bytes payload = 2; }
+// A request for a trusted Consumer approval. Correlation and requester identity
+// deliberately live on the authenticated Driver event/report envelope; a
+// Driver cannot nominate a different session, participant, or operation here.
+message ApprovalTimestamp { int64 unix_seconds = 1; uint32 nanoseconds = 2; }
+message ApprovalRequestReport {
+  string capability = 1;
+  bytes resource = 2;
+  string summary = 3;
+  ApprovalTimestamp expires_at = 4;
+}
+message Report {
+  bytes operation_id = 1;
+  oneof result { ReportOutcome outcome = 2; Failure failure = 3; ApprovalRequestReport approval_request = 6; }
+  bytes message_id = 4;
+  bytes delivery_attempt_id = 5;
+}
+message Disconnected { string reason = 1; bool ownership_lost = 2; }
+message DriverEvent {
+  bytes event_id = 1; InstanceIdentity instance = 2; uint64 sequence = 3;
+  oneof event { Ready ready = 4; AcceptanceEvent acceptance = 5; Report report = 6; Disconnected disconnected = 7; StopResponse stopped = 8; HierarchyCommand hierarchy_command = 10; ToolCommand tool_command = 11; }
+  bytes in_reply_to = 9;
+}
+message AcceptanceEvent { bytes message_id = 1; Acceptance acceptance = 2; bytes delivery_attempt_id = 3; }
+
+message HierarchyCommand {
+  bytes request_id = 1;
+  oneof command {
+    SpawnChildCommand spawn_child = 2;
+    SendMessageCommand send = 3;
+    ParticipantStatusCommand status = 4;
+    CancelHierarchyCommand cancel = 5;
+  }
+}
+message SpawnChildCommand {
+  bytes template_id = 1;
+  reserved 2;
+  reserved "expected_compatibility";
+  bytes task_input = 3;
+  bytes grant_id = 4;
+}
+message SendMessageCommand {
+  bytes destination_participant_id = 1;
+  bytes validated_envelope = 2;
+}
+message ParticipantStatusCommand {
+  bytes participant_id = 1;
+  bytes operation_id = 2;
+}
+message CancelHierarchyCommand {
+  bytes participant_id = 1;
+  bytes operation_id = 2;
+}
+message HierarchyResultRequest {
+  MutationMetadata metadata = 1;
+  InstanceIdentity instance = 2;
+  bytes hierarchy_request_id = 3;
+  oneof result {
+    SpawnChildResult spawned = 4;
+    ParticipantStatusResult status = 5;
+    MessageAcceptedResult sent = 6;
+    CancelAcceptedResult cancelled = 7;
+    Failure failure = 8;
+  }
+}
+message SpawnChildResult { bytes participant_id = 1; bytes operation_id = 2; bytes input_message_id = 3; }
+message ParticipantStatusResult { bytes participant_id = 1; bytes operation_id = 2; string state = 3; }
+message MessageAcceptedResult { bytes message_id = 1; }
+message CancelAcceptedResult { bytes operation_id = 1; }
+message HierarchyResultResponse { bytes in_reply_to = 1; bytes hierarchy_request_id = 2; }
+
+// A bounded request emitted by an authenticated Driver instance. Navigator
+// derives caller authority from the instance; these identities are correlation,
+// not credentials.
+message ToolCommand {
+  bytes request_id = 1;
+  bytes session_id = 2;
+  bytes participant_id = 3;
+  bytes operation_id = 4;
+  string tool_name = 5;
+  string tool_version = 6;
+  bytes input = 7;
+  bytes authority_grant_id = 8;
+  // Distinct from hierarchy Authority grants. When present, this narrow
+  // Approval grant is consumed into a durable effect intent before dispatch.
+  bytes approval_grant_id = 9;
+}
+message ToolResultRequest {
+  MutationMetadata metadata = 1;
+  InstanceIdentity instance = 2;
+  bytes tool_request_id = 3;
+  oneof result {
+    ToolCallResult success = 4;
+    Failure failure = 5;
+  }
+}
+message ToolArtifactReference {
+  bytes artifact_id = 1;
+  bytes session_id = 2;
+  bytes creator_participant_id = 3;
+  bytes creator_operation_id = 4;
+  string media_type = 5;
+  uint64 size = 6;
+  bytes sha256 = 7;
+}
+message ToolCallResult {
+  bytes output = 1;
+  repeated ToolArtifactReference artifacts = 2;
+}
+message ToolResultResponse { bytes in_reply_to = 1; bytes tool_request_id = 2; }
+
+message Envelope {
+  bytes envelope_id = 20;
+  bytes response_authenticator = 21;
+  bytes response_to_request_id = 22;
+  oneof body {
+    DescribeRequest describe_request = 1; DescribeResponse describe_response = 2;
+    StartRequest start_request = 3; StartResponse start_response = 4;
+    InspectRequest inspect_request = 5; InspectResponse inspect_response = 6;
+    DeliverRequest deliver_request = 7; DeliverResponse deliver_response = 8;
+    AcceptanceRequest acceptance_request = 9; AcceptanceResponse acceptance_response = 10;
+    CancelRequest cancel_request = 11; CancelResponse cancel_response = 12;
+    StopRequest stop_request = 13; StopResponse stop_response = 14;
+    ObserveRequest observe_request = 15; DriverEvent event = 16;
+    ObserveResponse observe_response = 27;
+    RemindRequest remind_request = 17; RemindResponse remind_response = 18;
+    HierarchyResultRequest hierarchy_result_request = 23;
+    HierarchyResultResponse hierarchy_result_response = 24;
+    ToolResultRequest tool_result_request = 25;
+    ToolResultResponse tool_result_response = 26;
+  }
+}

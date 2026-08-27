@@ -1,0 +1,24 @@
+{
+  "name": "@navigator/driver-protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./gen/*": "./dist/gen/*"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "generate": "mise exec -- cargo run -p navigator-driver-protocol --example generate_typescript",
+    "build": "tsc -p tsconfig.build.json",
+    "check": "tsc --noEmit && npm run build && node --import tsx test/fixture.test.ts"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "2.10.2"
+  },
+  "devDependencies": {
+    "@bufbuild/protoc-gen-es": "2.10.2",
+    "@types/node": "22.15.3",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3"
+  }
+}

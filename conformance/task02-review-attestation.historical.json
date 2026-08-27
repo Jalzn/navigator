@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "task": "Task02",
+  "verdict": "GO",
+  "reviewed_at": "2026-08-26T08:02:00Z",
+  "evidence_directory": "evidence/task02-final-20260826T0752",
+  "evidence_index_sha256": "4204a9f4763a07751dbf9cc516742f0e194ac95a12d7fcf725784deb45c35b5e",
+  "source_tree_sha256": "12ff41821ee7cd692e7e28458756d18f7623909d93431f0a13b40f06cba2d73f",
+  "endpoint_matrix_sha256": "238fe40d1fcfe6cd1e668dcbcdb61fe8dad5657d9160cd68c0e38b1389e99881",
+  "sbom_sha256": "7aa85ce04ac259fde41276cffd8fa300c69b30be650c9b780b3ed5a469acb127",
+  "historical_only": true
+}

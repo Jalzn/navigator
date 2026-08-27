@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "navigator-sdk"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = ["grpcio>=1.74,<2", "protobuf>=6.31,<7", "pydantic>=2.11,<3"]
+
+[project.optional-dependencies]
+dev = ["build==1.4.4", "grpcio-tools==1.80.0", "hatchling==1.27.0", "mypy==1.19.1", "pytest==8.4.2", "pytest-asyncio==1.2.0", "ruff==0.16.4", "types-grpcio==1.0.0.20251009"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/navigator"]
+
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+exclude = ["src/navigator/_transport/navigator"]
+
+[tool.ruff.lint]
+ignore = ["B008", "BLE001", "FA100", "PYI034"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+packages = ["navigator"]
+exclude = "src/navigator/_transport/"
+
+[[tool.mypy.overrides]]
+module = "navigator.connection"
+disallow_untyped_calls = false
+
+[[tool.mypy.overrides]]
+module = "navigator.client"
+warn_return_any = false

@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "seed": 1203001,
+  "classifications": ["terminal", "recoverable", "uncertain", "cleanup_required"],
+  "source": {
+    "files": [
+      "crates/navigator-store-sqlite/src/store.rs",
+      "crates/navigator-local/src/artifact_store.rs"
+    ],
+    "durable_prefixes": [
+      "launch.prepare.", "launch.mutate.", "mailbox.enqueue.", "mailbox.lease.",
+      "mailbox.transition.", "tool.reserve.", "tool.transition.",
+      "operation.transition.", "cancellation.", "approval."
+    ],
+    "durable_point_count": 53,
+    "durable_point_sha256": "956914197bee5a871a0167d9d3107a8c7caa30fdda6467894da78f1c89985a3b"
+  },
+  "evidence_tests": {
+    "launch": ["cargo", "test", "-p", "navigator-driver-fake", "--test", "vertical_e2e", "external_launch_fault_matrix_reopens_observed_sqlite_state", "--locked"],
+    "mailbox": ["cargo", "test", "-p", "navigator-store-sqlite", "--lib", "mailbox_mutations_are_prior_or_committed_at_every_transaction_boundary", "--locked"],
+    "delivery": ["cargo", "test", "-p", "navigator-driver-fake", "--test", "vertical_e2e", "external_delivery_fault_matrix_reopens_observed_sqlite_state", "--locked"],
+    "tool": ["cargo", "test", "-p", "navigator-local", "--lib", "external_tool_and_approval_fault_matrix_reopens_observed_state", "--locked"],
+    "operation": ["cargo", "test", "-p", "navigator-store-sqlite", "--lib", "participant_and_operation_crash_boundaries_are_prior_or_committed", "--locked"],
+    "report": ["cargo", "test", "-p", "navigator-driver-fake", "--test", "vertical_e2e", "external_report_fault_matrix_reopens_observed_sqlite_state", "--locked"],
+    "cancellation": ["cargo", "test", "-p", "navigator-driver-fake", "--test", "vertical_e2e", "external_cancellation_fault_matrix_reopens_observed_sqlite_state", "--locked"],
+    "artifact": ["cargo", "test", "-p", "navigator-local", "--lib", "external_artifact_fault_matrix_reopens_and_derives_observed_state", "--locked"],
+    "approval": ["cargo", "test", "-p", "navigator-local", "--lib", "external_tool_and_approval_fault_matrix_reopens_observed_state", "--locked"],
+    "shutdown": ["cargo", "test", "-p", "navigator-local", "--features", "fault-injection", "--test", "acceptance", "external_shutdown_fault_matrix_reopens_and_reconciles_owned_session", "--locked"]
+  },
+  "durable_evidence_tests": {
+    "launch": ["cargo", "test", "-p", "navigator-store-sqlite", "--lib", "abrupt_process_loss", "--locked"],
+    "mailbox": ["cargo", "test", "-p", "navigator-store-sqlite", "--lib", "mailbox_mutations_are_prior_or_committed_at_every_transaction_boundary", "--locked"],
+    "tool": ["cargo", "test", "-p", "navigator-store-sqlite", "--lib", "tool_reserve_start_terminal_and_cancel_crashes_are_prior_or_full", "--locked"],
+    "operation": ["cargo", "test", "-p", "navigator-store-sqlite", "--lib", "participant_and_operation_crash_boundaries_are_prior_or_committed", "--locked"],
+    "cancellation": ["cargo", "test", "-p", "navigator-store-sqlite", "--lib", "cancellation_crash_is_prior_or_fully_committed", "--locked"],
+    "approval": ["cargo", "test", "-p", "navigator-store-sqlite", "--lib", "approval_mutation_crash_matrix_is_atomic_and_exactly_replayable", "--locked"]
+  },
+  "external_effects": [
+    {"area":"launch","operation":"instance_create","points":["launch.external.before_call","launch.external.after_call","launch.external.before_identity_proof","launch.external.after_identity_proof"],"expected":["recoverable","cleanup_required","cleanup_required","cleanup_required"]},
+    {"area":"delivery","operation":"driver_acceptance","points":["delivery.external.before_call","delivery.external.after_call","delivery.external.before_acceptance_proof","delivery.external.after_acceptance_proof"],"expected":["recoverable","uncertain","uncertain","uncertain"]},
+    {"area":"tool","operation":"provider_effect","points":["tool.external.before_call","tool.external.after_call","tool.external.before_result_proof","tool.external.after_result_proof"],"expected":["uncertain","uncertain","uncertain","terminal"]},
+    {"area":"report","operation":"terminal_report","points":["report.external.before_call","report.external.after_call","report.external.before_correlation_proof","report.external.after_correlation_proof"],"expected":["recoverable","recoverable","recoverable","recoverable"]},
+    {"area":"cancellation","operation":"driver_abort","points":["cancellation.external.before_call","cancellation.external.after_call","cancellation.external.before_stop_proof","cancellation.external.after_stop_proof"],"expected":["recoverable","uncertain","uncertain","uncertain"]},
+    {"area":"artifact","operation":"atomic_publish","points":["artifact.external.before_call","artifact.external.after_call","artifact.external.before_metadata_proof","artifact.external.after_metadata_proof"],"expected":["recoverable","cleanup_required","cleanup_required","terminal"]},
+    {"area":"approval","operation":"privileged_effect","points":["approval.external.before_call","approval.external.after_call","approval.external.before_effect_proof","approval.external.after_effect_proof"],"expected":["recoverable","recoverable","recoverable","recoverable"]},
+    {"area":"shutdown","operation":"owned_process_stop","points":["shutdown.external.before_call","shutdown.external.after_call","shutdown.external.before_identity_proof","shutdown.external.after_identity_proof"],"expected":["cleanup_required","terminal","terminal","terminal"]}
+  ],
+  "final_invariants": [
+    "no_duplicate_unfinished_participant",
+    "no_duplicate_unfinished_operation",
+    "no_orphan_reservation",
+    "uncertain_effect_not_ordinarily_replayed",
+    "stale_owner_cannot_commit",
+    "unrelated_process_not_terminated",
+    "classified_final_state"
+  ]
+}

@@ -1,0 +1,1011 @@
+syntax = "proto3";
+
+package navigator.consumer.v1;
+
+service NavigatorConsumer {
+  rpc Negotiate(NegotiateRequest) returns (NegotiateResponse);
+  rpc OpenSession(OpenSessionRequest) returns (OpenSessionResponse);
+  rpc Snapshot(SnapshotRequest) returns (SnapshotResponse);
+  rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
+  rpc SubscribeEvents(SubscribeEventsRequest) returns (stream SubscribeEventsResponse);
+  // Bounded, strictly read-only event polling for inspectors.
+  rpc ReadEvents(ReadEventsRequest) returns (ReadEventsResponse);
+  rpc StartOperation(StartOperationRequest) returns (StartOperationResponse);
+  rpc OperationSnapshot(OperationSnapshotRequest) returns (OperationSnapshotResponse);
+  rpc ParticipantSnapshot(ParticipantSnapshotRequest) returns (ParticipantSnapshotResponse);
+  rpc MessageSnapshot(MessageSnapshotRequest) returns (MessageSnapshotResponse);
+  rpc CancelSubtree(CancelSubtreeRequest) returns (CancelSubtreeResponse);
+  rpc ResumeSession(ResumeSessionRequest) returns (ResumeSessionResponse);
+  rpc ResolveUncertainty(ResolveUncertaintyRequest) returns (ResolveUncertaintyResponse);
+  // Requires consumer.tools.v1.
+  rpc RegisterTool(RegisterToolRequest) returns (RegisterToolResponse);
+  // A reconnectable, authenticated Consumer provider channel. The first client
+  // frame is ConnectToolProvider; subsequent frames correlate one invocation.
+  rpc ProvideTools(stream ToolProviderRequest) returns (stream ToolProviderResponse);
+  // Requires artifacts.v1. Content never enters ordinary Message payloads.
+  rpc WriteArtifact(stream WriteArtifactRequest) returns (WriteArtifactResponse);
+  rpc ReadArtifact(ReadArtifactRequest) returns (stream ReadArtifactResponse);
+  rpc ArtifactSnapshot(ArtifactSnapshotRequest) returns (ArtifactSnapshotResponse);
+  rpc DeleteArtifact(DeleteArtifactRequest) returns (DeleteArtifactResponse);
+  // Requires approvals.v1. Decisions are accepted only at the authenticated,
+  // Session-bound trusted Consumer boundary.
+  rpc ApprovalSnapshot(ApprovalSnapshotRequest) returns (ApprovalSnapshotResponse);
+  rpc ApproveApproval(ApproveApprovalRequest) returns (ApproveApprovalResponse);
+  rpc DenyApproval(DenyApprovalRequest) returns (DenyApprovalResponse);
+  rpc RevokeApprovalGrant(RevokeApprovalGrantRequest) returns (RevokeApprovalGrantResponse);
+  // Requires operational.projections.v1. This RPC is strictly read-only.
+  rpc ReadProjection(ReadProjectionRequest) returns (ReadProjectionResponse);
+}
+
+message ProtocolVersion {
+  uint32 major = 1;
+  uint32 minor = 2;
+}
+
+message RequestMetadata {
+  ProtocolVersion protocol_version = 1;
+  repeated string capabilities = 2;
+  bytes negotiation_id = 3;
+}
+
+message NegotiateRequest {
+  ProtocolVersion minimum_version = 1;
+  ProtocolVersion maximum_version = 2;
+  repeated string capabilities = 3;
+}
+
+message NegotiateResponse {
+  oneof outcome {
+    Negotiated negotiated = 1;
+    Failure failure = 2;
+  }
+}
+
+message Negotiated {
+  ProtocolVersion protocol_version = 1;
+  repeated string capabilities = 2;
+  bytes negotiation_id = 3;
+  bytes configuration_identity = 4;
+}
+
+message OpenSessionRequest {
+  reserved 6;
+  reserved "ownership_request_id";
+
+  RequestMetadata metadata = 1;
+  bytes request_id = 2;
+  bytes session_id = 3;
+  string consumer_key = 4;
+  bytes compatibility_identity = 5;
+  RootTemplateSpecification root_template = 7;
+  repeated RootTemplateSpecification compatible_templates = 8;
+  bytes configuration_identity = 9;
+  // Requires session.open-modes.v1. When set, session_id is a server-generated
+  // candidate identity and consumer_key is the durable lookup identity.
+  SessionOpenMode mode = 10;
+}
+
+enum SessionOpenMode {
+  SESSION_OPEN_MODE_UNSPECIFIED = 0;
+  SESSION_OPEN_MODE_OPEN = 1;
+  SESSION_OPEN_MODE_RESUME = 2;
+  SESSION_OPEN_MODE_RESET = 3;
+}
+
+// Kept as a single entry in Slice 03; later slices may wrap this shape in a catalog.
+message RootTemplateSpecification {
+  bytes template_id = 1;
+  string role = 2;
+  bytes driver_id = 3;
+  repeated DriverCapabilityRequirement required_capabilities = 4;
+  TrustedTemplateConfiguration trusted_configuration = 5;
+  ParticipantResourceBounds resources = 6;
+  InputSchema input_schema = 7;
+  AuthorityProfileSpecification authority_profile = 8;
+}
+
+message AuthorityProfileSpecification {
+  repeated ScopedCapabilitySpecification active = 1;
+  repeated ScopedCapabilitySpecification delegable = 2;
+}
+
+message ScopedCapabilitySpecification {
+  string capability = 1;
+  oneof resource {
+    bytes session_id = 2;
+    bytes participant_id = 3;
+    bytes operation_id = 4;
+    bytes artifact_id = 5;
+  }
+}
+
+message DriverCapabilityRequirement {
+  string capability = 1;
+  uint32 minimum_version = 2;
+  repeated CapabilityParameter parameters = 3;
+}
+
+message CapabilityParameter { string key = 1; string value = 2; }
+
+message TrustedTemplateConfiguration {
+  string base_instructions = 1;
+  repeated string secret_names = 2;
+}
+
+message ParticipantResourceBounds {
+  uint64 memory_bytes = 1;
+  uint64 cpu_millis = 2;
+  uint32 max_concurrent_operations = 3;
+}
+
+message InputSchema { repeated InputField fields = 1; }
+
+message InputField {
+  string name = 1;
+  InputKind kind = 2;
+  bool required = 3;
+  optional uint32 max_string_bytes = 4;
+}
+
+enum InputKind {
+  INPUT_KIND_UNSPECIFIED = 0;
+  INPUT_KIND_STRING = 1;
+  INPUT_KIND_INTEGER = 2;
+  INPUT_KIND_BOOLEAN = 3;
+}
+
+message OpenSessionResponse {
+  oneof outcome {
+    SessionSnapshot snapshot = 1;
+    Failure failure = 2;
+  }
+}
+
+message SnapshotRequest {
+  RequestMetadata metadata = 1;
+  bytes session_id = 2;
+}
+
+message SnapshotResponse {
+  oneof outcome {
+    SessionSnapshot snapshot = 1;
+    Failure failure = 2;
+  }
+}
+
+message CloseSessionRequest {
+  RequestMetadata metadata = 1;
+  bytes request_id = 2;
+  bytes session_id = 3;
+}
+
+message CloseSessionResponse {
+  oneof outcome {
+    SessionSnapshot snapshot = 1;
+    Failure failure = 2;
+  }
+}
+
+message SubscribeEventsRequest {
+  RequestMetadata metadata = 1;
+  bytes session_id = 2;
+  uint64 after_position = 3;
+}
+
+message SubscribeEventsResponse {
+  oneof outcome {
+    SessionEvent event = 1;
+    Failure failure = 2;
+  }
+}
+
+message ReadEventsRequest {
+  RequestMetadata metadata = 1;
+  bytes session_id = 2;
+  uint64 after_position = 3;
+  uint32 page_size = 4;
+}
+
+message EventPage {
+  repeated SessionEvent events = 1;
+  bool has_more = 2;
+}
+
+message ReadEventsResponse {
+  oneof outcome {
+    EventPage page = 1;
+    Failure failure = 2;
+  }
+}
+
+enum ProjectionView {
+  PROJECTION_VIEW_UNSPECIFIED = 0;
+  PROJECTION_VIEW_SESSION_TREE = 1;
+  PROJECTION_VIEW_ACTIVE_WORK = 2;
+  PROJECTION_VIEW_DELIVERY = 3;
+  PROJECTION_VIEW_APPROVAL = 4;
+  PROJECTION_VIEW_RECOVERY = 5;
+  PROJECTION_VIEW_CAPACITY = 6;
+  PROJECTION_VIEW_FAILURE = 7;
+}
+
+message ReadProjectionRequest {
+  RequestMetadata metadata = 1;
+  bytes session_id = 2;
+  ProjectionView view = 3;
+  uint32 page_size = 4;
+  string page_token = 5;
+  string consumer_key = 6;
+}
+
+message ProjectionItem {
+  string key = 1;
+  bytes redacted_json = 2;
+}
+
+message ProjectionPage {
+  bytes session_id = 1;
+  ProjectionView view = 2;
+  uint64 generation = 3;
+  optional uint64 checkpoint_position = 4;
+  optional uint64 source_head_position = 5;
+  repeated ProjectionItem items = 6;
+  string next_page_token = 7;
+}
+
+message ReadProjectionResponse {
+  oneof outcome {
+    ProjectionPage page = 1;
+    Failure failure = 2;
+  }
+}
+
+message StartOperationRequest {
+  RequestMetadata metadata = 1;
+  bytes request_id = 2;
+  bytes session_id = 3;
+  bytes participant_id = 4;
+  bytes input = 5;
+}
+
+message StartOperationResponse {
+  oneof outcome {
+    OperationSnapshot snapshot = 1;
+    Failure failure = 2;
+  }
+}
+
+message OperationSnapshotRequest {
+  RequestMetadata metadata = 1;
+  bytes session_id = 2;
+  bytes operation_id = 3;
+}
+
+message OperationSnapshotResponse {
+  oneof outcome {
+    OperationSnapshot snapshot = 1;
+    Failure failure = 2;
+  }
+}
+
+message ParticipantSnapshotRequest {
+  RequestMetadata metadata = 1;
+  bytes session_id = 2;
+  bytes participant_id = 3;
+}
+
+message ParticipantSnapshotResponse {
+  oneof outcome {
+    ParticipantSnapshot snapshot = 1;
+    Failure failure = 2;
+  }
+}
+
+message MessageSnapshotRequest {
+  RequestMetadata metadata = 1;
+  bytes session_id = 2;
+  bytes message_id = 3;
+}
+
+message MessageSnapshotResponse {
+  oneof outcome {
+    MessageSnapshot snapshot = 1;
+    Failure failure = 2;
+  }
+}
+
+message CancelSubtreeRequest {
+  RequestMetadata metadata = 1;
+  bytes request_id = 2;
+  bytes session_id = 3;
+  bytes root_participant_id = 4;
+}
+
+message CancelSubtreeResponse {
+  oneof outcome {
+    CancellationSnapshot cancellation = 1;
+    Failure failure = 2;
+  }
+}
+
+message ResumeSessionRequest {
+  RequestMetadata metadata = 1;
+  bytes request_id = 2;
+  bytes session_id = 3;
+}
+
+message ResumeSessionResponse {
+  oneof outcome {
+    RecoveryReport report = 1;
+    Failure failure = 2;
+  }
+}
+
+message RecoveryReport {
+  bytes session_id = 1;
+  repeated RecoveryClassification classifications = 2;
+}
+
+message RecoveryClassification {
+  oneof entity {
+    bytes session_id = 1;
+    bytes participant_id = 4;
+    bytes launch_attempt_id = 5;
+    bytes operation_id = 6;
+    bytes message_id = 7;
+    bytes effect_id = 8;
+  }
+  RecoveryDisposition disposition = 2;
+  repeated ResolutionAction allowed_actions = 3;
+  string reason = 9;
+  RecoveryActionStatus action_status = 10;
+}
+
+enum RecoveryActionStatus {
+  RECOVERY_ACTION_STATUS_UNSPECIFIED = 0;
+  RECOVERY_ACTION_STATUS_EXECUTED = 1;
+  RECOVERY_ACTION_STATUS_NO_OP = 2;
+  RECOVERY_ACTION_STATUS_PENDING = 3;
+  RECOVERY_ACTION_STATUS_BLOCKED_BY_UNCERTAINTY = 4;
+  RECOVERY_ACTION_STATUS_BLOCKED_BY_CLEANUP = 5;
+}
+
+enum RecoveryDisposition {
+  RECOVERY_DISPOSITION_UNSPECIFIED = 0;
+  RECOVERY_DISPOSITION_SAFE_TO_CONTINUE = 1;
+  RECOVERY_DISPOSITION_SAFE_TO_REDELIVER = 2;
+  RECOVERY_DISPOSITION_EFFECT_UNCERTAIN = 3;
+  RECOVERY_DISPOSITION_TERMINAL = 4;
+  RECOVERY_DISPOSITION_EXTERNALLY_ALIVE = 5;
+  RECOVERY_DISPOSITION_CLEANUP_REQUIRED = 6;
+}
+
+enum ResolutionAction {
+  RESOLUTION_ACTION_UNSPECIFIED = 0;
+  RESOLUTION_ACTION_CONFIRM_COMPLETED = 1;
+  RESOLUTION_ACTION_DO_NOT_RETRY = 2;
+  RESOLUTION_ACTION_RETRY_WITH_EFFECT_PROOF = 3;
+}
+
+message ResolveUncertaintyRequest {
+  RequestMetadata metadata = 1;
+  bytes request_id = 2;
+  bytes session_id = 3;
+  bytes operation_id = 4;
+  bytes authority_grant_id = 5;
+  string reason = 6;
+  oneof resolution {
+    EffectProof confirm_completed = 7;
+    DoNotRetry do_not_retry = 8;
+    EffectProof retry_with_effect_proof = 9;
+  }
+  bytes effect_id = 10;
+}
+
+message DoNotRetry {}
+
+message EffectProof {
+  EffectProofKind kind = 1;
+  bytes digest = 2;
+  bytes evidence = 3;
+}
+
+enum EffectProofKind {
+  EFFECT_PROOF_KIND_UNSPECIFIED = 0;
+  EFFECT_PROOF_KIND_EXTERNAL_COMMIT = 1;
+  EFFECT_PROOF_KIND_IDEMPOTENCY_RECEIPT = 2;
+  EFFECT_PROOF_KIND_EFFECT_ABSENT = 3;
+}
+
+message ResolveUncertaintyResponse {
+  oneof outcome {
+    ResolutionSnapshot resolution = 1;
+    Failure failure = 2;
+  }
+}
+
+message ResolutionSnapshot {
+  OperationSnapshot operation = 1;
+  ResolutionAction action = 2;
+  bytes authority_grant_id = 3;
+  string reason = 4;
+  bytes request_id = 5;
+  bytes session_id = 6;
+  bytes effect_id = 7;
+  uint64 revision = 8;
+  uint64 audit_event_position = 9;
+  RecoveryActionStatus action_status = 10;
+}
+
+message CancellationSnapshot {
+  bytes root_participant_id = 1;
+  repeated CancellationOperation operations = 2;
+}
+
+message CancellationOperation {
+  OperationSnapshot operation = 1;
+  bytes notification_message_id = 2;
+  bool driver_acknowledged = 3;
+}
+
+message OperationSnapshot {
+  bytes operation_id = 1;
+  bytes session_id = 2;
+  bytes participant_id = 3;
+  bytes request_id = 4;
+  OperationStatus status = 5;
+  optional bytes result = 6;
+  optional Failure terminal_failure = 7;
+  uint64 revision = 8;
+  Timestamp created_at = 9;
+  Timestamp updated_at = 10;
+}
+
+message ParticipantSnapshot {
+  bytes session_id = 1;
+  bytes participant_id = 2;
+  optional bytes parent_participant_id = 3;
+  uint32 depth = 4;
+  bytes template_id = 5;
+  bytes template_compatibility = 6;
+  uint64 revision = 7;
+}
+
+message MessageSnapshot {
+  bytes session_id = 1;
+  bytes message_id = 2;
+  bytes source_participant_id = 3;
+  bytes destination_participant_id = 4;
+  uint64 mailbox_sequence = 5;
+  MessagePriority priority = 6;
+  optional bytes operation_id = 7;
+  optional bytes in_reply_to = 8;
+  bytes envelope = 9;
+  uint32 attempt_count = 10;
+  MessageDeliveryStatus delivery_status = 11;
+  uint64 revision = 12;
+  Timestamp created_at = 13;
+  Timestamp updated_at = 14;
+}
+
+enum MessagePriority {
+  MESSAGE_PRIORITY_UNSPECIFIED = 0;
+  MESSAGE_PRIORITY_CONTROL = 1;
+  MESSAGE_PRIORITY_ORDINARY = 2;
+}
+
+enum MessageDeliveryStatus {
+  MESSAGE_DELIVERY_STATUS_UNSPECIFIED = 0;
+  MESSAGE_DELIVERY_STATUS_QUEUED = 1;
+  MESSAGE_DELIVERY_STATUS_RETRY_SCHEDULED = 2;
+  MESSAGE_DELIVERY_STATUS_LEASED = 3;
+  MESSAGE_DELIVERY_STATUS_ACCEPTANCE_PENDING = 4;
+  MESSAGE_DELIVERY_STATUS_ACCEPTANCE_UNKNOWN = 5;
+  MESSAGE_DELIVERY_STATUS_ACCEPTED = 6;
+  MESSAGE_DELIVERY_STATUS_UNCERTAIN = 7;
+  MESSAGE_DELIVERY_STATUS_DEAD_LETTER = 8;
+}
+
+enum OperationStatus {
+  OPERATION_STATUS_UNSPECIFIED = 0;
+  OPERATION_STATUS_QUEUED = 1;
+  OPERATION_STATUS_STARTING = 2;
+  OPERATION_STATUS_RUNNING = 3;
+  OPERATION_STATUS_WAITING = 4;
+  OPERATION_STATUS_BLOCKED = 5;
+  OPERATION_STATUS_CANCELLING = 6;
+  OPERATION_STATUS_SUCCEEDED = 7;
+  OPERATION_STATUS_FAILED = 8;
+  OPERATION_STATUS_CANCELLED = 9;
+  OPERATION_STATUS_UNCERTAIN = 10;
+  OPERATION_STATUS_DELIVERING = 11;
+}
+
+message SessionSnapshot {
+  bytes session_id = 1;
+  string consumer_key = 2;
+  bytes compatibility_identity = 3;
+  SessionStatus status = 4;
+  uint64 revision = 5;
+  Timestamp created_at = 6;
+  Timestamp updated_at = 7;
+  bytes root_participant_id = 8;
+}
+
+enum SessionStatus {
+  SESSION_STATUS_UNSPECIFIED = 0;
+  SESSION_STATUS_OPEN = 1;
+  SESSION_STATUS_CLOSED = 2;
+}
+
+message SessionEvent {
+  bytes event_id = 1;
+  bytes session_id = 2;
+  uint64 position = 3;
+  uint64 revision = 4;
+  string event_type = 5;
+  uint32 schema_version = 6;
+  optional bytes related_request_id = 7;
+  bytes data = 8;
+  Timestamp occurred_at = 9;
+}
+
+message Timestamp {
+  int64 unix_seconds = 1;
+  uint32 nanoseconds = 2;
+}
+
+message Failure {
+  FailureCode code = 1;
+  string message = 2;
+  RetryClass retry = 3;
+  optional bytes related_id = 4;
+  bytes details = 5;
+}
+
+enum FailureCode {
+  FAILURE_CODE_UNSPECIFIED = 0;
+  FAILURE_CODE_INVALID_REQUEST = 1;
+  FAILURE_CODE_UNSUPPORTED_VERSION = 2;
+  FAILURE_CODE_UNSUPPORTED_CAPABILITY = 3;
+  FAILURE_CODE_NOT_FOUND = 4;
+  FAILURE_CODE_CONFLICT = 5;
+  FAILURE_CODE_STALE_OWNERSHIP = 6;
+  FAILURE_CODE_UNAVAILABLE = 7;
+  FAILURE_CODE_INTERNAL = 8;
+  FAILURE_CODE_AUTHENTICATION = 9;
+  FAILURE_CODE_AUTHORIZATION = 10;
+  FAILURE_CODE_CAPACITY = 11;
+  FAILURE_CODE_TIMEOUT = 12;
+  FAILURE_CODE_CANCELLED = 13;
+  FAILURE_CODE_UNCERTAIN_EFFECT = 14;
+  FAILURE_CODE_CLEANUP_REQUIRED = 15;
+  FAILURE_CODE_CORRUPTED_STATE = 16;
+  FAILURE_CODE_UNSUPPORTED = 17;
+  FAILURE_CODE_INCOMPATIBLE = 18;
+}
+
+enum RetryClass {
+  RETRY_CLASS_UNSPECIFIED = 0;
+  RETRY_CLASS_NEVER = 1;
+  RETRY_CLASS_SAFE = 2;
+  RETRY_CLASS_AFTER_RECONCILIATION = 3;
+}
+
+// ---- Slice 10: durable Consumer Tools and bounded Artifacts -----------------
+
+message RegisterToolRequest {
+  reserved 10 to 15;
+  RequestMetadata metadata = 1;
+  bytes request_id = 2;
+  bytes session_id = 3;
+  ToolSpecification tool = 4;
+}
+
+message RegisterToolResponse {
+  reserved 3 to 7;
+  oneof outcome {
+    ToolRegistrationSnapshot registration = 1;
+    Failure failure = 2;
+  }
+}
+
+message ToolSpecification {
+  reserved 11 to 15;
+  string name = 1;
+  string version = 2;
+  bytes input_schema = 3;
+  bytes output_schema = 4;
+  string required_authority = 5;
+  uint64 timeout_millis = 6;
+  ToolCancellationBehavior cancellation_behavior = 7;
+  ToolEffectClass effect_class = 8;
+  ToolIdempotencyContract idempotency_contract = 9;
+  bool requires_approval = 10;
+}
+
+enum ToolCancellationBehavior {
+  TOOL_CANCELLATION_BEHAVIOR_UNSPECIFIED = 0;
+  TOOL_CANCELLATION_BEHAVIOR_COOPERATIVE = 1;
+  TOOL_CANCELLATION_BEHAVIOR_UNSUPPORTED = 2;
+}
+
+enum ToolEffectClass {
+  TOOL_EFFECT_CLASS_UNSPECIFIED = 0;
+  TOOL_EFFECT_CLASS_READ_ONLY = 1;
+  TOOL_EFFECT_CLASS_IDEMPOTENT = 2;
+  TOOL_EFFECT_CLASS_TRANSACTIONAL = 3;
+  TOOL_EFFECT_CLASS_NON_IDEMPOTENT = 4;
+  TOOL_EFFECT_CLASS_UNKNOWN = 5;
+}
+
+enum ToolIdempotencyContract {
+  TOOL_IDEMPOTENCY_CONTRACT_UNSPECIFIED = 0;
+  TOOL_IDEMPOTENCY_CONTRACT_NO_EXTERNAL_EFFECT = 1;
+  TOOL_IDEMPOTENCY_CONTRACT_INVOCATION_IDENTITY = 2;
+  TOOL_IDEMPOTENCY_CONTRACT_EXTERNAL_TRANSACTION_PROOF = 3;
+  TOOL_IDEMPOTENCY_CONTRACT_NEVER_REPLAY = 4;
+}
+
+message ToolRegistrationSnapshot {
+  reserved 9 to 15;
+  bytes registration_id = 1;
+  bytes session_id = 2;
+  ToolSpecification tool = 3;
+  uint64 revision = 4;
+  Timestamp created_at = 5;
+  Timestamp updated_at = 6;
+  bool active = 7;
+  bytes request_id = 8;
+}
+
+message ToolProviderRequest {
+  reserved 10 to 15;
+  oneof frame {
+    ConnectToolProvider connect = 1;
+    ToolHandlerStarted started = 2;
+    ToolHandlerResult result = 3;
+    ToolHandlerFailure failure = 4;
+  }
+}
+
+message ConnectToolProvider {
+  reserved 7 to 12;
+  RequestMetadata metadata = 1;
+  bytes session_id = 2;
+  bytes provider_id = 3;
+  bytes connection_id = 4;
+  // Last server sequence durably handled by this provider. Zero starts fresh.
+  uint64 after_server_sequence = 5;
+  repeated bytes registration_ids = 6;
+}
+
+message ToolHandlerStarted {
+  // Durable effect-boundary handshake, phase 1: the SDK sends this marker but
+  // MUST NOT enter Consumer handler code until it receives the exact
+  // TOOL_PROVIDER_ACK_KIND_STARTED acknowledgement. That acknowledgement is
+  // Navigator's durable boundary. Result/failure before it is invalid.
+  reserved 8 to 12;
+  bytes session_id = 1;
+  bytes provider_id = 2;
+  bytes connection_id = 3;
+  bytes invocation_id = 4;
+  bytes dispatch_id = 5;
+  uint64 server_sequence = 6;
+  Timestamp started_at = 7;
+}
+
+message ToolHandlerResult {
+  reserved 9 to 12;
+  bytes session_id = 1;
+  bytes provider_id = 2;
+  bytes connection_id = 3;
+  bytes invocation_id = 4;
+  bytes dispatch_id = 5;
+  uint64 server_sequence = 6;
+  bytes output = 7;
+  repeated ArtifactReference artifacts = 8;
+}
+
+message ToolHandlerFailure {
+  reserved 8 to 12;
+  bytes session_id = 1;
+  bytes provider_id = 2;
+  bytes connection_id = 3;
+  bytes invocation_id = 4;
+  bytes dispatch_id = 5;
+  uint64 server_sequence = 6;
+  Failure failure = 7;
+}
+
+message ToolProviderResponse {
+  reserved 10 to 15;
+  oneof frame {
+    ToolProviderConnected connected = 1;
+    ToolInvocation invocation = 2;
+    ToolInvocationCancel cancellation = 3;
+    ToolProviderAck acknowledgement = 4;
+    Failure failure = 5;
+  }
+}
+
+message ToolProviderConnected {
+  reserved 7 to 8;
+  bytes session_id = 1;
+  bytes provider_id = 2;
+  bytes connection_id = 3;
+  uint64 next_server_sequence = 4;
+  uint64 accepted_after_server_sequence = 5;
+  uint64 high_water_server_sequence = 6;
+}
+
+message ToolInvocation {
+  reserved 12 to 16;
+  bytes session_id = 1;
+  bytes registration_id = 2;
+  bytes invocation_id = 3;
+  bytes dispatch_id = 4;
+  bytes operation_id = 5;
+  bytes participant_id = 6;
+  uint64 server_sequence = 7;
+  string tool_name = 8;
+  string tool_version = 9;
+  bytes input = 10;
+  Timestamp deadline = 11;
+}
+
+message ToolInvocationCancel {
+  reserved 7 to 10;
+  bytes session_id = 1;
+  bytes invocation_id = 2;
+  bytes dispatch_id = 3;
+  uint64 server_sequence = 4;
+  bytes cancellation_id = 5;
+  Timestamp requested_at = 6;
+}
+
+message ToolProviderAck {
+  reserved 7 to 10;
+  bytes session_id = 1;
+  bytes invocation_id = 2;
+  bytes dispatch_id = 3;
+  uint64 server_sequence = 4;
+  ToolProviderAckKind kind = 5;
+  bool duplicate = 6;
+}
+
+enum ToolProviderAckKind {
+  TOOL_PROVIDER_ACK_KIND_UNSPECIFIED = 0;
+  // Emitted only after HandlerStarted is durably committed. Receipt authorizes
+  // the SDK to enter the Consumer handler exactly for this dispatch.
+  TOOL_PROVIDER_ACK_KIND_STARTED = 1;
+  TOOL_PROVIDER_ACK_KIND_TERMINAL = 2;
+}
+
+message WriteArtifactRequest {
+  reserved 10 to 15;
+  oneof frame {
+    BeginArtifactWrite begin = 1;
+    ArtifactChunk chunk = 2;
+  }
+}
+
+message BeginArtifactWrite {
+  reserved 12 to 15;
+  RequestMetadata metadata = 1;
+  bytes request_id = 2;
+  bytes session_id = 3;
+  bytes artifact_id = 4;
+  string media_type = 5;
+  uint64 declared_size = 6;
+  bytes declared_sha256 = 7;
+  Timestamp retain_until = 8;
+  bytes authority_grant_id = 9;
+  bytes creator_participant_id = 10;
+  bytes creator_operation_id = 11;
+}
+
+message ArtifactChunk {
+  reserved 4 to 8;
+  bytes artifact_id = 1;
+  uint64 offset = 2;
+  bytes content = 3;
+}
+
+message WriteArtifactResponse {
+  reserved 3 to 7;
+  oneof outcome {
+    ArtifactSnapshot artifact = 1;
+    Failure failure = 2;
+  }
+}
+
+message ReadArtifactRequest {
+  reserved 7 to 12;
+  RequestMetadata metadata = 1;
+  bytes session_id = 2;
+  bytes artifact_id = 3;
+  uint64 offset = 4;
+  optional uint64 length = 5;
+  bytes authority_grant_id = 6;
+}
+
+message ReadArtifactResponse {
+  reserved 4 to 8;
+  oneof outcome {
+    ArtifactReadHeader header = 1;
+    ArtifactChunk chunk = 2;
+    Failure failure = 3;
+  }
+}
+
+message ArtifactReadHeader {
+  reserved 4 to 8;
+  ArtifactSnapshot artifact = 1;
+  uint64 range_offset = 2;
+  uint64 range_length = 3;
+}
+
+message ArtifactSnapshotRequest {
+  reserved 4 to 8;
+  RequestMetadata metadata = 1;
+  bytes session_id = 2;
+  bytes artifact_id = 3;
+}
+
+message ArtifactSnapshotResponse {
+  reserved 3 to 7;
+  oneof outcome {
+    ArtifactSnapshot artifact = 1;
+    Failure failure = 2;
+  }
+}
+
+message DeleteArtifactRequest {
+  reserved 6 to 10;
+  RequestMetadata metadata = 1;
+  bytes request_id = 2;
+  bytes session_id = 3;
+  bytes artifact_id = 4;
+  bytes authority_grant_id = 5;
+}
+
+message DeleteArtifactResponse {
+  reserved 3 to 7;
+  oneof outcome {
+    ArtifactSnapshot artifact = 1;
+    Failure failure = 2;
+  }
+}
+
+message ArtifactReference {
+  reserved 8 to 10;
+  bytes artifact_id = 1;
+  bytes session_id = 2;
+  string media_type = 3;
+  uint64 size = 4;
+  bytes sha256 = 5;
+  bytes creator_participant_id = 6;
+  bytes creator_operation_id = 7;
+}
+
+message ArtifactSnapshot {
+  reserved 14 to 20;
+  reserved "request_id";
+  bytes artifact_id = 1;
+  bytes session_id = 2;
+  string media_type = 3;
+  uint64 size = 4;
+  bytes sha256 = 5;
+  string storage_relative_locator = 6;
+  ArtifactStatus status = 7;
+  Timestamp retain_until = 8;
+  Timestamp created_at = 9;
+  Timestamp updated_at = 10;
+  uint64 revision = 11;
+  bytes creator_participant_id = 12;
+  bytes creator_operation_id = 13;
+}
+
+enum ArtifactStatus {
+  ARTIFACT_STATUS_UNSPECIFIED = 0;
+  ARTIFACT_STATUS_AVAILABLE = 1;
+  ARTIFACT_STATUS_LOGICALLY_DELETED = 2;
+  ARTIFACT_STATUS_ERASURE_ELIGIBLE = 3;
+  ARTIFACT_STATUS_ERASED = 4;
+  ARTIFACT_STATUS_CORRUPTED = 5;
+}
+
+// ---- Slice 11: trusted Consumer Approval decisions -------------------------
+
+message ApprovalSnapshotRequest {
+  RequestMetadata metadata = 1;
+  bytes session_id = 2;
+  bytes approval_id = 3;
+}
+message ApprovalSnapshotResponse {
+  oneof outcome { ApprovalSnapshot approval = 1; Failure failure = 2; }
+}
+message ApproveApprovalRequest {
+  RequestMetadata metadata = 1;
+  bytes request_id = 2;
+  bytes session_id = 3;
+  bytes approval_id = 4;
+  uint64 expected_revision = 5;
+  bytes grant_id = 6;
+  Timestamp grant_expires_at = 7;
+  uint32 max_uses = 8;
+}
+message ApproveApprovalResponse {
+  oneof outcome { ApprovalSnapshot approval = 1; Failure failure = 2; }
+}
+message DenyApprovalRequest {
+  RequestMetadata metadata = 1;
+  bytes request_id = 2;
+  bytes session_id = 3;
+  bytes approval_id = 4;
+  uint64 expected_revision = 5;
+}
+message DenyApprovalResponse {
+  oneof outcome { ApprovalSnapshot approval = 1; Failure failure = 2; }
+}
+message RevokeApprovalGrantRequest {
+  RequestMetadata metadata = 1;
+  bytes request_id = 2;
+  bytes session_id = 3;
+  bytes grant_id = 4;
+  uint64 expected_revision = 5;
+}
+message RevokeApprovalGrantResponse {
+  oneof outcome { ApprovalSnapshot approval = 1; Failure failure = 2; }
+}
+
+message ApprovalSnapshot {
+  ApprovalRequestSnapshot request = 1;
+  optional ApprovalGrantSnapshot grant = 2;
+}
+message ApprovalRequestSnapshot {
+  bytes approval_id = 1;
+  bytes session_id = 2;
+  bytes requester_participant_id = 3;
+  bytes operation_id = 4;
+  string capability = 5;
+  bytes resource = 6;
+  string summary = 7;
+  ApprovalStatus status = 8;
+  Timestamp expires_at = 9;
+  optional bytes grant_id = 10;
+  ApprovalDecisionSource decision_source = 11;
+  Timestamp created_at = 12;
+  optional Timestamp decided_at = 13;
+  uint64 revision = 14;
+}
+message ApprovalGrantSnapshot {
+  bytes grant_id = 1;
+  bytes approval_id = 2;
+  bytes session_id = 3;
+  bytes subject_participant_id = 4;
+  bytes operation_id = 5;
+  string capability = 6;
+  bytes resource_hash = 7;
+  ApprovalDecisionSource issued_by = 8;
+  uint32 max_uses = 9;
+  uint32 used_count = 10;
+  Timestamp expires_at = 11;
+  optional Timestamp revoked_at = 12;
+  Timestamp created_at = 13;
+  uint64 revision = 14;
+}
+enum ApprovalStatus {
+  APPROVAL_STATUS_UNSPECIFIED = 0;
+  APPROVAL_STATUS_PENDING = 1;
+  APPROVAL_STATUS_GRANTED = 2;
+  APPROVAL_STATUS_CONSUMED = 3;
+  APPROVAL_STATUS_DENIED = 4;
+  APPROVAL_STATUS_EXPIRED = 5;
+  APPROVAL_STATUS_REVOKED = 6;
+}
+enum ApprovalDecisionSource {
+  APPROVAL_DECISION_SOURCE_UNSPECIFIED = 0;
+  APPROVAL_DECISION_SOURCE_TRUSTED_CONSUMER = 1;
+}

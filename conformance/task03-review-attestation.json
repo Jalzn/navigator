@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "task": "12-hardening/03-fault-matrix",
+  "verdict": "GO",
+  "reviewed_at": "2026-08-26",
+  "jsonl_sha256": "fe754c53a7cee79f001a62b0745a37d477e13e45ba119b8f660d784989817739",
+  "case_count": 85,
+  "raw_result_count": 85,
+  "raw_sorted_sha256_manifest_sha256": "5d2a4e1e9da27a3a0b66f2cb5045a45d358bfd2ec42e52bf2ba8a45841415159"
+}

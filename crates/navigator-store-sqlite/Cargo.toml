@@ -1,0 +1,29 @@
+[package]
+name = "navigator-store-sqlite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+navigator-domain.workspace = true
+navigator-store-api.workspace = true
+hmac.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+sha2.workspace = true
+navigator-conformance.workspace = true
+proptest.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

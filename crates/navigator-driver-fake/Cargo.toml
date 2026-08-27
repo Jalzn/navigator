@@ -1,0 +1,39 @@
+[package]
+name = "navigator-driver-fake"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["uds-process-tests"]
+uds-process-tests = []
+
+[dependencies]
+navigator-driver-protocol.workspace = true
+prost.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+command-fds.workspace = true
+navigator-conformance.workspace = true
+navigator-consumer-protocol.workspace = true
+navigator-core.workspace = true
+navigator-domain.workspace = true
+navigator-driver-client.workspace = true
+navigator-local = { workspace = true, features = ["fault-injection"] }
+nix.workspace = true
+navigator-store-api.workspace = true
+navigator-store-sqlite.workspace = true
+navigator-supervisor.workspace = true
+sqlx.workspace = true
+tempfile.workspace = true
+time.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

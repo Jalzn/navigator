@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "generator": "sqlite3 3.51.1; Navigator migrations applied sequentially; DELETE journal; VACUUM",
+  "rich_state": ["session", "ownership", "template", "participant", "running operation", "event", "request replay ledger"],
+  "fixtures": [
+    {"path":"schema-v18-rich.db","user_version":18,"sha256":"e2c565c20b8ee8ba1fe199aee71ae5b29ad92cf5c61b2a49b64bdffeab12f53a"},
+    {"path":"schema-v19-rich.db","user_version":19,"sha256":"ca71996b1544e7e6743ecaa49158ff212d3b38daac4209ca53d206d98a70765c"}
+  ]
+}

@@ -1,0 +1,4 @@
+ALTER TABLE launch_attempts
+ADD COLUMN driver_configuration_digest BLOB NOT NULL
+DEFAULT X'0000000000000000000000000000000000000000000000000000000000000000'
+CHECK (length(driver_configuration_digest) = 32);
