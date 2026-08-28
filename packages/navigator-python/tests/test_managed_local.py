@@ -182,6 +182,7 @@ async def test_packaged_runtime_v2_generates_private_strict_pi_catalog(
     arguments = observed["arguments"]
     assert isinstance(arguments, list)
     assert arguments[arguments.index("--driver-entry") + 1] == "pi"
+    assert arguments[arguments.index("--shutdown-timeout-ms") + 1] == "10000"
     assert observed["catalog_mode"] == 0o600
     assert observed["auth_mode"] == 0o600
     assert observed["workspace_mode"] == 0o700

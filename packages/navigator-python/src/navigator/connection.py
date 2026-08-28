@@ -32,6 +32,7 @@ _MAX_STARTUP_DIAGNOSTIC_BYTES = 4096
 _MAX_CHANNEL_CLOSE_SECONDS = 1.0
 _MIN_CLEANUP_WAIT_SECONDS = 0.05
 _DEFAULT_STARTUP_TIMEOUT_SECONDS = 30.0
+_DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 10.0
 _MAX_CLEANUP_WAIT_SECONDS = 30.0
 _MAX_GROUP_OBSERVATION_SECONDS = 0.25
 _RUNTIME_PACKAGE = "navigator._runtime"
@@ -476,7 +477,7 @@ class LocalNavigator:
         binary: Optional[os.PathLike[str]] = None,
         binary_sha256: Optional[str] = None,
         startup_timeout: float = _DEFAULT_STARTUP_TIMEOUT_SECONDS,
-        shutdown_timeout: float = 5.0,
+        shutdown_timeout: float = _DEFAULT_SHUTDOWN_TIMEOUT_SECONDS,
         capabilities: tuple[str, ...] = _CAPABILITIES,
         driver_catalog: Optional[os.PathLike[str]] = None,
         driver_catalog_sha256: Optional[str] = None,

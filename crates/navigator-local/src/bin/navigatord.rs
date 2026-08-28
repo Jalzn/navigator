@@ -10,6 +10,13 @@ use navigator_store_api::LeaseDuration;
 use navigator_store_sqlite::SqliteStore;
 use tokio::sync::watch;
 
+const DEFAULT_SHUTDOWN_TIMEOUT_MS: u64 = 10_000;
+const MIN_CONFIGURED_RUNTIME_SHUTDOWN_MS: u64 = 5_100;
+
+const fn configured_runtime_deadline_valid(timeout_ms: u64) -> bool {
+    timeout_ms >= MIN_CONFIGURED_RUNTIME_SHUTDOWN_MS
+}
+
 #[derive(Parser)]
 struct Args {
     #[arg(long)]
@@ -20,7 +27,7 @@ struct Args {
     credential_file: PathBuf,
     #[arg(long, default_value_t = 30_000)]
     lease_ms: u64,
-    #[arg(long, default_value_t = 5_000)]
+    #[arg(long, default_value_t = DEFAULT_SHUTDOWN_TIMEOUT_MS)]
     shutdown_timeout_ms: u64,
     /// Trusted JSON Driver catalog. Omission keeps execution fail-closed.
     #[arg(long, requires = "driver_entry")]
@@ -64,6 +71,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+    if selected_driver.is_some() && !configured_runtime_deadline_valid(args.shutdown_timeout_ms) {
+        return Err(Box::<dyn std::error::Error>::from(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "configured Driver runtime requires --shutdown-timeout-ms >= {MIN_CONFIGURED_RUNTIME_SHUTDOWN_MS}"
+            ),
+        )));
+    }
     let credential = BootstrapCredential::from_file(&args.credential_file)?;
     let host_path = args.database.with_extension("host-id");
     let host_id = load_or_create_host_id(host_path)?;
@@ -123,4 +138,35 @@ async fn wait_for_signal() {
 #[cfg(not(unix))]
 async fn wait_for_signal() {
     let _ = tokio::signal::ctrl_c().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_close_deadline_has_supervisor_and_persistence_margin() {
+        let args = Args::try_parse_from([
+            "navigatord",
+            "--database",
+            "/tmp/navigator-test.db",
+            "--socket",
+            "/tmp/navigator-test.sock",
+            "--credential-file",
+            "/tmp/navigator-test.credential",
+        ])
+        .unwrap();
+        assert_eq!(args.shutdown_timeout_ms, DEFAULT_SHUTDOWN_TIMEOUT_MS);
+        assert!(
+            Duration::from_millis(args.shutdown_timeout_ms)
+                > Duration::from_secs(2) + Duration::from_secs(2) + Duration::from_millis(100)
+        );
+        assert!(args.shutdown_timeout_ms >= MIN_CONFIGURED_RUNTIME_SHUTDOWN_MS);
+        assert!(!configured_runtime_deadline_valid(
+            MIN_CONFIGURED_RUNTIME_SHUTDOWN_MS - 1
+        ));
+        assert!(configured_runtime_deadline_valid(
+            MIN_CONFIGURED_RUNTIME_SHUTDOWN_MS
+        ));
+    }
 }

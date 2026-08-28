@@ -2173,19 +2173,27 @@ where
         } else {
             match (stopping, terminal) {
                 (Ok(stopping), Ok(terminal)) => {
-                    let control_deadline = deadline
-                        .checked_sub(self.supervisor.process_stop_budget())
-                        .unwrap_or_else(tokio::time::Instant::now);
-                    let _ =
-                        tokio::time::timeout_at(control_deadline, driver.request_stop(attempt_id))
-                            .await;
-                    self.shutdown_attempt(
-                        attempt_id,
-                        epoch,
-                        StopRequestIds { stopping, terminal },
-                        deadline,
-                    )
-                    .await
+                    // The Driver RPC is advisory; the Supervisor is the
+                    // authoritative, identity-checked cleanup path. Running
+                    // them serially consumed part of the caller's deadline
+                    // before SIGTERM/SIGKILL even began. A slow Pi stop RPC
+                    // could therefore leave less than the configured process
+                    // stop budget and persist CleanupRequired although the
+                    // exact process exited immediately afterwards.
+                    let graceful_driver = Arc::clone(&driver);
+                    let graceful =
+                        tokio::spawn(async move { graceful_driver.request_stop(attempt_id).await });
+                    let result = self
+                        .shutdown_attempt(
+                            attempt_id,
+                            epoch,
+                            StopRequestIds { stopping, terminal },
+                            deadline,
+                        )
+                        .await;
+                    graceful.abort();
+                    let _ = graceful.await;
+                    result
                 }
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }

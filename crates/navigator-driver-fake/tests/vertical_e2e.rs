@@ -2138,11 +2138,15 @@ async fn run_consumer_reconnect_case(cancel: bool) {
         .close(Uuid::from_u128(505), session)
         .await
         .expect("composed Session Close crosses the Consumer boundary");
-    assert!(matches!(
-        closed.outcome,
-        Some(consumer::close_session_response::Outcome::Snapshot(ref snapshot))
-            if snapshot.status == consumer::SessionStatus::Closed as i32
-    ));
+    assert!(
+        matches!(
+            closed.outcome,
+            Some(consumer::close_session_response::Outcome::Snapshot(ref snapshot))
+                if snapshot.status == consumer::SessionStatus::Closed as i32
+        ),
+        "confirmed cancellation must permit close: {:?}",
+        closed.outcome
+    );
     shutdown_tx.send(true).unwrap();
     server.await.unwrap().unwrap();
     let remaining = control_dir
@@ -2158,7 +2162,7 @@ async fn run_consumer_reconnect_case(cancel: bool) {
 }
 
 #[tokio::test]
-async fn consumer_reconnect_observes_real_driver_terminal_and_ordered_events() {
+async fn succeeded_operation_with_confirmed_cancel_closes_across_vertical_boundary() {
     let _process_guard = PROCESS_TEST_LOCK.lock().await;
     run_consumer_reconnect_case(false).await;
 }

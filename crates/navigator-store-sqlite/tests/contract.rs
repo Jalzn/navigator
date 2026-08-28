@@ -1279,6 +1279,21 @@ async fn cancellation_is_durable_subtree_scoped_and_cleanup_is_not_optimistic() 
         command,
     } = prepare_cancellation_scenario().await;
     let cancelled = fixture.store.cancel_subtree(command.clone()).await.unwrap();
+    let messages_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages")
+        .fetch_one(fixture.store.pool())
+        .await
+        .unwrap();
+    let inspected = fixture
+        .store
+        .inspect_subtree_cancellation(scope.session_id, child)
+        .await
+        .unwrap();
+    assert_eq!(inspected, *cancelled.value());
+    let messages_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages")
+        .fetch_one(fixture.store.pool())
+        .await
+        .unwrap();
+    assert_eq!(messages_after, messages_before);
     assert_eq!(cancelled.value().records.len(), 2);
     let child_record = cancelled
         .value()

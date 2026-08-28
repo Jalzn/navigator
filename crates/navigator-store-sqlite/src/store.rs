@@ -7874,6 +7874,47 @@ impl HierarchyStore for SqliteStore {
         Ok(Mutation::Applied(outcome))
     }
 
+    async fn inspect_subtree_cancellation(
+        &self,
+        session_id: SessionId,
+        root_participant_id: ParticipantId,
+    ) -> Result<CancelSubtreeOutcome, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx)?;
+        let root = load_participant_in(&mut tx, root_participant_id).await?;
+        if root.is_none_or(|value| value.session_id != session_id) {
+            return Err(StoreError::Invalid);
+        }
+        let rows = sqlx::query(
+            "WITH RECURSIVE subtree(participant_id) AS (SELECT ? UNION ALL SELECT p.participant_id FROM participants p JOIN subtree s ON p.parent_participant_id=s.participant_id WHERE p.session_id=?) SELECT o.operation_id FROM operations o JOIN subtree s ON o.participant_id=s.participant_id WHERE o.session_id=? ORDER BY o.created_at_seconds,o.created_at_nanos,o.operation_id",
+        )
+        .bind(root_participant_id.to_string())
+        .bind(session_id.to_string())
+        .bind(session_id.to_string())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_sqlx)?;
+        let mut records = Vec::with_capacity(rows.len());
+        for row in rows {
+            let raw: String = row.try_get("operation_id").map_err(map_sqlx)?;
+            let operation_id =
+                OperationId::from_uuid(Uuid::parse_str(&raw).map_err(|_| StoreError::Corrupt)?)
+                    .map_err(|_| StoreError::Corrupt)?;
+            let operation = load_operation_in(&mut tx, operation_id)
+                .await?
+                .ok_or(StoreError::Corrupt)?;
+            let notification = load_cancel_notification_in(&mut tx, &operation).await?;
+            records.push(CancellationRecord {
+                operation,
+                notification,
+            });
+        }
+        tx.commit().await.map_err(map_sqlx)?;
+        Ok(CancelSubtreeOutcome {
+            root_participant_id,
+            records,
+        })
+    }
+
     async fn cancellation_requested(
         &self,
         participant_id: ParticipantId,

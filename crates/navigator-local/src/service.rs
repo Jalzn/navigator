@@ -2104,32 +2104,38 @@ impl<S: OperationStore + 'static> LocalNavigator<S> {
             epoch,
             root_participant_id: root_id,
         };
+        let prior = self
+            .store
+            .inspect_subtree_cancellation(session_id, root_id)
+            .await;
+        let prior_launches = self.store.session_has_unresolved_launches(session_id).await;
+        if durable_cancellation_is_confirmed(&prior, &prior_launches) {
+            return true;
+        }
         match self
             .operations
             .cancel_session_until(permit, command.clone(), deadline)
             .await
         {
-            Ok(outcome) => outcome
-                .records
-                .iter()
-                .all(|record| record.operation.state.is_terminal()),
-            Err(OperationControlError::Unavailable) => {
-                let launches = self.store.session_has_launches(session_id).await;
-                if !store_only_close_permitted(&launches) {
-                    return false;
-                }
-                self.store
-                    .cancel_subtree(command)
-                    .await
-                    .is_ok_and(|outcome| {
-                        outcome
-                            .value()
-                            .records
-                            .iter()
-                            .all(|record| record.operation.state.is_terminal())
-                    })
+            Ok(outcome) => cancellation_is_confirmed(&outcome),
+            Err(
+                OperationControlError::Unavailable
+                | OperationControlError::Store(_)
+                | OperationControlError::CleanupRequired,
+            ) => {
+                // A prior explicit cancellation may already have completed the
+                // driver lifecycle.  In that case a fresh close-scoped request
+                // cannot necessarily contact the now-absent driver.  Accept
+                // only the durable proof left behind by that cancellation:
+                // every operation has confirmed cleanup and every launch is
+                // durably stopped.  Either missing proof remains fail-closed.
+                let outcome = self
+                    .store
+                    .inspect_subtree_cancellation(session_id, root_id)
+                    .await;
+                let unresolved = self.store.session_has_unresolved_launches(session_id).await;
+                durable_cancellation_is_confirmed(&outcome, &unresolved)
             }
-            Err(OperationControlError::Store(_) | OperationControlError::CleanupRequired) => false,
         }
     }
 }
@@ -2169,8 +2175,18 @@ where
     }
 }
 
-fn store_only_close_permitted(result: &Result<bool, StoreError>) -> bool {
-    matches!(result, Ok(false))
+fn cancellation_is_confirmed(outcome: &navigator_store_api::CancelSubtreeOutcome) -> bool {
+    outcome
+        .records
+        .iter()
+        .all(|record| record.operation.state.is_terminal() && record.cleanup_confirmed())
+}
+
+fn durable_cancellation_is_confirmed(
+    outcome: &Result<navigator_store_api::CancelSubtreeOutcome, StoreError>,
+    unresolved_launches: &Result<bool, StoreError>,
+) -> bool {
+    matches!((outcome, unresolved_launches), (Ok(outcome), Ok(false)) if cancellation_is_confirmed(outcome))
 }
 
 fn close_deadline_failure() -> Failure {
@@ -5739,11 +5755,21 @@ mod host_shutdown_tests {
     }
 
     #[test]
-    fn unavailable_controller_never_falls_back_when_a_launch_may_exist() {
-        assert!(store_only_close_permitted(&Ok(false)));
-        assert!(!store_only_close_permitted(&Ok(true)));
-        assert!(!store_only_close_permitted(&Err(StoreError::Unavailable)));
-        assert!(!store_only_close_permitted(&Err(StoreError::Corrupt)));
+    fn close_fallback_requires_durable_cancellation_and_stopped_launches() {
+        let confirmed = Ok(navigator_store_api::CancelSubtreeOutcome {
+            root_participant_id: ParticipantId::from_uuid(Uuid::from_u128(92_100)).unwrap(),
+            records: Vec::new(),
+        });
+        assert!(durable_cancellation_is_confirmed(&confirmed, &Ok(false)));
+        assert!(!durable_cancellation_is_confirmed(&confirmed, &Ok(true)));
+        assert!(!durable_cancellation_is_confirmed(
+            &confirmed,
+            &Err(StoreError::Unavailable)
+        ));
+        assert!(!durable_cancellation_is_confirmed(
+            &Err(StoreError::Unavailable),
+            &Ok(false)
+        ));
     }
 
     #[test]

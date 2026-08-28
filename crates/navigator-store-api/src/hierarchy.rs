@@ -243,6 +243,16 @@ pub trait HierarchyStore: Send + Sync {
         &self,
         command: CancelSubtree,
     ) -> impl Future<Output = Result<Mutation<CancelSubtreeOutcome>, StoreError>> + Send;
+    /// Reads the current cancellation evidence without issuing another cancel
+    /// notification. Intended for lifecycle reconciliation after a driver has
+    /// already terminated.
+    fn inspect_subtree_cancellation(
+        &self,
+        _session_id: SessionId,
+        _root_participant_id: ParticipantId,
+    ) -> impl Future<Output = Result<CancelSubtreeOutcome, StoreError>> + Send {
+        async { Err(StoreError::Unavailable) }
+    }
     fn cancellation_requested(
         &self,
         participant_id: ParticipantId,
