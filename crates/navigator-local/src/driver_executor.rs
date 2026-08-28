@@ -370,6 +370,7 @@ pub(crate) struct DriverExecutor {
     tool_sink: Option<Arc<dyn ToolCommandSink>>,
     tool_correlations: Arc<Mutex<ToolRuntimeCorrelations>>,
     host_id: HostId,
+    base_config_identity: [u8; 32],
     config_identity: [u8; 32],
     stopping: Arc<LifecycleFence>,
 }
@@ -413,6 +414,7 @@ struct SupervisedDriverMetadata {
     hierarchy_sink: Option<Arc<dyn HierarchyCommandSink>>,
     tool_sink: Option<Arc<dyn ToolCommandSink>>,
     host_id: HostId,
+    base_config_identity: [u8; 32],
     config_identity: [u8; 32],
 }
 
@@ -1603,6 +1605,20 @@ fn catalog_lifecycle_action(
     }
 }
 
+fn operation_catalog_lifecycle_action(
+    active_base: [u8; 32],
+    active_resolved: [u8; 32],
+    next_base: [u8; 32],
+    next_resolved: [u8; 32],
+    catalog_is_empty: bool,
+) -> CatalogLifecycleAction {
+    if catalog_is_empty && active_base == next_base {
+        CatalogLifecycleAction::Reuse
+    } else {
+        catalog_lifecycle_action(Some(active_resolved), next_resolved)
+    }
+}
+
 fn active_cache_has_capacity(size: usize) -> bool {
     size < MAX_ACTIVE_DRIVER_CACHE
 }
@@ -2270,6 +2286,7 @@ where
         {
             return Err(boundary_error());
         }
+        let catalog_is_empty = catalog.entries.as_array().is_some_and(Vec::is_empty);
         let trusted_configuration = trusted_configuration_with_catalog(
             serde_json::to_value(&registered.trusted_configuration).map_err(executor_error)?,
             catalog.entries,
@@ -2281,8 +2298,13 @@ where
             .get(&(participant_id, epoch.get()))
             .cloned()
         {
-            if catalog_lifecycle_action(Some(driver.config_identity), resolved_config_identity)
-                == CatalogLifecycleAction::Reuse
+            if operation_catalog_lifecycle_action(
+                driver.base_config_identity,
+                driver.config_identity,
+                base_config_identity,
+                resolved_config_identity,
+                catalog_is_empty,
+            ) == CatalogLifecycleAction::Reuse
             {
                 return Ok(driver);
             }
@@ -2388,8 +2410,13 @@ where
             .get(&(participant_id, epoch.get()))
             .cloned()
         {
-            if catalog_lifecycle_action(Some(driver.config_identity), resolved_config_identity)
-                == CatalogLifecycleAction::Reuse
+            if operation_catalog_lifecycle_action(
+                driver.base_config_identity,
+                driver.config_identity,
+                base_config_identity,
+                resolved_config_identity,
+                catalog_is_empty,
+            ) == CatalogLifecycleAction::Reuse
             {
                 return Ok(driver);
             }
@@ -2658,6 +2685,7 @@ where
                 hierarchy_sink,
                 tool_sink,
                 host_id: self.host_id,
+                base_config_identity,
                 config_identity: resolved_config_identity,
             },
         );
@@ -4131,6 +4159,7 @@ impl DriverExecutor {
             tool_sink: metadata.tool_sink,
             tool_correlations: Arc::new(Mutex::new(ToolRuntimeCorrelations::default())),
             host_id: metadata.host_id,
+            base_config_identity: metadata.base_config_identity,
             config_identity: metadata.config_identity,
             stopping: lifecycle_fence,
         })
@@ -5720,6 +5749,38 @@ mod report_cursor_tests {
                 "epoch churn retains only the current attempt"
             );
         }
+    }
+
+    #[test]
+    fn empty_operation_catalog_preserves_driver_session_for_same_base_config() {
+        let base = [1; 32];
+        let first_operation = [2; 32];
+        let second_operation = [3; 32];
+
+        assert_eq!(
+            operation_catalog_lifecycle_action(base, first_operation, base, second_operation, true,),
+            CatalogLifecycleAction::Reuse
+        );
+        assert_eq!(
+            operation_catalog_lifecycle_action(
+                base,
+                first_operation,
+                [4; 32],
+                second_operation,
+                true,
+            ),
+            CatalogLifecycleAction::Replace
+        );
+        assert_eq!(
+            operation_catalog_lifecycle_action(
+                base,
+                first_operation,
+                base,
+                second_operation,
+                false,
+            ),
+            CatalogLifecycleAction::Replace
+        );
     }
 
     #[test]
