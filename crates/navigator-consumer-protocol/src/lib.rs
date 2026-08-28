@@ -777,8 +777,19 @@ pub fn validate_cancellation_snapshot(
         }
         if !record.notification_message_id.is_empty() {
             validate_id(&record.notification_message_id)?;
-        } else if record.driver_acknowledged {
-            return Err(ValidationError::MissingField);
+        } else if record.cleanup_confirmed {
+            let status = v1::OperationStatus::try_from(operation.status)
+                .map_err(|_| ValidationError::InvalidEnum)?;
+            if !matches!(
+                status,
+                v1::OperationStatus::Succeeded
+                    | v1::OperationStatus::Failed
+                    | v1::OperationStatus::Cancelled
+                    | v1::OperationStatus::Blocked
+                    | v1::OperationStatus::Uncertain
+            ) {
+                return Err(ValidationError::MissingField);
+            }
         }
     }
     Ok(())

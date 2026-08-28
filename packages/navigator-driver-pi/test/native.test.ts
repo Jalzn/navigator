@@ -145,7 +145,7 @@ test("trusted Tool catalog exposes only fixed registrations and rejects catalog 
     async () => { throw new Error("unused"); },
     async () => { throw new Error("unused"); },
     async () => ({
-      outputBase64: Buffer.from("tool committed").toString("base64"),
+      outputBase64: Buffer.from('{"status":"committed"}').toString("base64"),
       artifacts: [{
         artifactId: "08".repeat(16), sessionId: "09".repeat(16),
         creatorParticipantId: "0a".repeat(16), creatorOperationId: "0b".repeat(16),
@@ -167,7 +167,7 @@ test("trusted Tool catalog exposes only fixed registrations and rejects catalog 
   const invoke = registered.execute as (...arguments_: unknown[]) => Promise<{ content: Array<{ type: string; text?: string }>; details: unknown }>;
   const observed = await invoke("call-1", {});
   assert.equal(observed.content[0]?.type, "text");
-  assert.equal(observed.content[0]?.text, Buffer.from("tool committed").toString("base64"));
+  assert.equal(observed.content[0]?.text, '{"status":"committed"}');
   assert.deepEqual(observed.details, { artifacts: [{
     artifactId: "08".repeat(16), sessionId: "09".repeat(16),
     creatorParticipantId: "0a".repeat(16), creatorOperationId: "0b".repeat(16),

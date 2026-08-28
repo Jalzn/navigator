@@ -834,14 +834,14 @@ class CancellationSnapshot(_message.Message):
     def __init__(self, root_participant_id: _Optional[bytes] = ..., operations: _Optional[_Iterable[_Union[CancellationOperation, _Mapping]]] = ...) -> None: ...
 
 class CancellationOperation(_message.Message):
-    __slots__ = ("operation", "notification_message_id", "driver_acknowledged")
+    __slots__ = ("operation", "notification_message_id", "cleanup_confirmed")
     OPERATION_FIELD_NUMBER: _ClassVar[int]
     NOTIFICATION_MESSAGE_ID_FIELD_NUMBER: _ClassVar[int]
-    DRIVER_ACKNOWLEDGED_FIELD_NUMBER: _ClassVar[int]
+    CLEANUP_CONFIRMED_FIELD_NUMBER: _ClassVar[int]
     operation: OperationSnapshot
     notification_message_id: bytes
-    driver_acknowledged: bool
-    def __init__(self, operation: _Optional[_Union[OperationSnapshot, _Mapping]] = ..., notification_message_id: _Optional[bytes] = ..., driver_acknowledged: bool = ...) -> None: ...
+    cleanup_confirmed: bool
+    def __init__(self, operation: _Optional[_Union[OperationSnapshot, _Mapping]] = ..., notification_message_id: _Optional[bytes] = ..., cleanup_confirmed: bool = ...) -> None: ...
 
 class OperationSnapshot(_message.Message):
     __slots__ = ("operation_id", "session_id", "participant_id", "request_id", "status", "result", "terminal_failure", "revision", "created_at", "updated_at")

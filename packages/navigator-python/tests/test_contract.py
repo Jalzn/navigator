@@ -659,7 +659,7 @@ async def test_complete_wrapper_builds_exact_requests_and_keeps_transport_privat
                         pb.CancellationOperation(
                             operation=operation,
                             notification_message_id=b"",
-                            driver_acknowledged=True,
+                            cleanup_confirmed=True,
                         )
                     ],
                 )
@@ -689,7 +689,7 @@ async def test_complete_wrapper_builds_exact_requests_and_keeps_transport_privat
     resolved = await client.resolve(oid(8), oid(2), oid(4), oid(7), "reviewed", DoNotRetry())
     assert negotiated.capabilities == ("events.replay",)
     assert started.id == oid(4)
-    assert cancelled.operations[0].driver_acknowledged is True
+    assert cancelled.operations[0].cleanup_confirmed is True
     assert cancelled.operations[0].notification_message_id is None
     assert resolved.audit_event_position == 9
     assert not hasattr(client, "stub")

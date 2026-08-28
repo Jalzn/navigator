@@ -216,10 +216,11 @@ pub struct CancellationRecord {
 
 impl CancellationRecord {
     #[must_use]
-    pub fn driver_acknowledged(&self) -> bool {
-        self.notification.as_ref().is_some_and(|message| {
-            matches!(message.state, crate::MessageDeliveryState::Accepted { .. })
-        })
+    pub fn cleanup_confirmed(&self) -> bool {
+        self.notification.as_ref().map_or_else(
+            || self.operation.state.is_terminal(),
+            |message| matches!(message.state, crate::MessageDeliveryState::Accepted { .. }),
+        )
     }
 }
 

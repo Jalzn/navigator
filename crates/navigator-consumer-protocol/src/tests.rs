@@ -685,7 +685,7 @@ fn operation_snapshot_requires_an_explicit_coherent_terminal_outcome() {
 }
 
 #[test]
-fn cancellation_snapshot_keeps_ack_distinct_and_rejects_duplicate_operations() {
+fn cancellation_snapshot_validates_cleanup_truth_table_and_duplicate_operations() {
     let operation = v1::OperationSnapshot {
         operation_id: id(1),
         session_id: id(2),
@@ -707,7 +707,7 @@ fn cancellation_snapshot_keeps_ack_distinct_and_rejects_duplicate_operations() {
     let record = v1::CancellationOperation {
         operation: Some(operation),
         notification_message_id: id(5),
-        driver_acknowledged: true,
+        cleanup_confirmed: true,
     };
     let mut snapshot = v1::CancellationSnapshot {
         root_participant_id: id(3),
@@ -719,6 +719,44 @@ fn cancellation_snapshot_keeps_ack_distinct_and_rejects_duplicate_operations() {
         validate_cancellation_snapshot(&snapshot),
         Err(ValidationError::MissingField)
     );
+    for status in [
+        v1::OperationStatus::Queued,
+        v1::OperationStatus::Starting,
+        v1::OperationStatus::Running,
+        v1::OperationStatus::Waiting,
+        v1::OperationStatus::Cancelling,
+    ] {
+        snapshot.operations[0].operation.as_mut().unwrap().status = status.into();
+        assert_eq!(
+            validate_cancellation_snapshot(&snapshot),
+            Err(ValidationError::MissingField),
+            "nonterminal {status:?} cannot acknowledge without a notification"
+        );
+    }
+    for status in [
+        v1::OperationStatus::Succeeded,
+        v1::OperationStatus::Failed,
+        v1::OperationStatus::Cancelled,
+        v1::OperationStatus::Blocked,
+        v1::OperationStatus::Uncertain,
+    ] {
+        let operation = snapshot.operations[0].operation.as_mut().unwrap();
+        operation.status = status.into();
+        operation.result = (status == v1::OperationStatus::Succeeded).then(Vec::new);
+        operation.terminal_failure =
+            (status != v1::OperationStatus::Succeeded).then(|| v1::Failure {
+                code: v1::FailureCode::Cancelled.into(),
+                message: "terminal".into(),
+                retry: v1::RetryClass::Never.into(),
+                related_id: None,
+                details: Vec::new(),
+            });
+        assert_eq!(
+            validate_cancellation_snapshot(&snapshot),
+            Ok(()),
+            "terminal {status:?} is vacuously acknowledged"
+        );
+    }
     snapshot.operations = vec![record.clone(), record];
     assert_eq!(
         validate_cancellation_snapshot(&snapshot),

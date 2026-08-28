@@ -19,6 +19,10 @@ Applications must persist `bytes(Identity)` and `int(EventPosition)` without
 interpreting their representation. `asyncio.CancelledError` is never converted
 to a Navigator domain failure.
 
+Cancellation records expose `cleanup_confirmed`. With no cancellation
+notification it means the operation is already terminal; with a notification it
+means that exact notification crossed the Driver's durable acceptance boundary.
+
 ## Tools and Artifacts
 
 `navigator.tools.register(...)` registers a frozen `ToolDefinition`, and

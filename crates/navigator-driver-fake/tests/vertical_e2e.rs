@@ -1928,7 +1928,7 @@ async fn run_consumer_reconnect_case(cancel: bool) {
             ),
         };
         assert_eq!(cancellation.operations.len(), 1);
-        if !cancellation.operations[0].driver_acknowledged {
+        if !cancellation.operations[0].cleanup_confirmed {
             let diagnostic = SqliteStore::open(directory.path().join("navigator.db"))
                 .await
                 .unwrap()
@@ -2036,7 +2036,23 @@ async fn run_consumer_reconnect_case(cancel: bool) {
             Some(consumer::cancel_subtree_response::Outcome::Cancellation(value)) => value,
             other => panic!("cancel replay failed: {other:?}"),
         };
-        assert!(replay.operations[0].driver_acknowledged);
+        assert!(replay.operations[0].cleanup_confirmed);
+    } else {
+        let completed = observer
+            .cancel_subtree(Uuid::from_u128(506), session, root)
+            .await
+            .unwrap();
+        let completed = match completed.outcome {
+            Some(consumer::cancel_subtree_response::Outcome::Cancellation(value)) => value,
+            other => panic!("terminal cancel observation failed: {other:?}"),
+        };
+        assert_eq!(completed.operations.len(), 1);
+        assert!(completed.operations[0].cleanup_confirmed);
+        assert!(completed.operations[0].notification_message_id.is_empty());
+        assert_eq!(
+            completed.operations[0].operation.as_ref().unwrap().status,
+            consumer::OperationStatus::Succeeded as i32
+        );
     }
     let persisted = SqliteStore::open(directory.path().join("navigator.db"))
         .await
@@ -2148,7 +2164,7 @@ async fn consumer_reconnect_observes_real_driver_terminal_and_ordered_events() {
 }
 
 #[tokio::test]
-async fn consumer_cancellation_crosses_uds_store_and_real_driver_ack_boundary() {
+async fn consumer_cancellation_reports_cleanup_across_the_vertical_boundary() {
     let _process_guard = PROCESS_TEST_LOCK.lock().await;
     run_consumer_reconnect_case(true).await;
 }
@@ -2361,7 +2377,7 @@ async fn run_external_driver_fault_points(area: ExternalDriverArea, points: &[&s
         let observation = parent.path().join("observed");
         let mut unrelated = Command::new("/bin/sleep").arg("30").spawn().unwrap();
         let child_test = if matches!(area, ExternalDriverArea::Cancellation) {
-            "consumer_cancellation_crosses_uds_store_and_real_driver_ack_boundary"
+            "consumer_cancellation_reports_cleanup_across_the_vertical_boundary"
         } else {
             "sqlite_owned_template_operation_runs_through_real_supervised_driver"
         };

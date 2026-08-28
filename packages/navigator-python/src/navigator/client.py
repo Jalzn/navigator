@@ -643,7 +643,7 @@ class Navigator:
                         if item.notification_message_id
                         else None
                     ),
-                    driver_acknowledged=item.driver_acknowledged,
+                    cleanup_confirmed=item.cleanup_confirmed,
                 )
                 for item in v.operations
             ),

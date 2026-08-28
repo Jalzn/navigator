@@ -1030,7 +1030,7 @@ class Failure(_Frozen):
 class CancellationOperation(_Frozen):
     operation: Operation
     notification_message_id: Optional[Identity]
-    driver_acknowledged: bool
+    cleanup_confirmed: bool
 
 
 class Cancellation(_Frozen):

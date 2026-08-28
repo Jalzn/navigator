@@ -41,6 +41,22 @@ function canonical(value: unknown): unknown {
   return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, child]) => [key, canonical(child)]));
 }
 
+export function decodeToolOutput(outputBase64: string): string {
+  const canonicalBase64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+  if (!canonicalBase64.test(outputBase64)) {
+    throw new Error("Navigator registered Tool returned invalid outputBase64");
+  }
+  const output = Buffer.from(outputBase64, "base64");
+  if (output.length === 0 || output.toString("base64") !== outputBase64) {
+    throw new Error("Navigator registered Tool returned non-canonical outputBase64");
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(output);
+  } catch (cause) {
+    throw new Error("Navigator registered Tool output is not valid UTF-8", { cause });
+  }
+}
+
 export class NavigatorToolBridge {
   readonly #emitReport: (report: ReportEmission) => Promise<void>;
   readonly #spawnChild: (command: SpawnEmission) => Promise<string>;
@@ -197,7 +213,7 @@ export class NavigatorToolBridge {
         const input = new TextEncoder().encode(JSON.stringify(canonical(params)));
         if (input.length > 65536) throw new Error("Tool input exceeds bound");
         const result = await this.#tool({ requestId, name: entry.name, version: entry.version, input, grantId: new Uint8Array() });
-        return { content: [{ type: "text", text: result.outputBase64 }], details: { artifacts: result.artifacts } };
+        return { content: [{ type: "text", text: decodeToolOutput(result.outputBase64) }], details: { artifacts: result.artifacts } };
       },
     }));
     return [commandTool, ...tools, ...registered];

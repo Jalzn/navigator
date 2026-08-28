@@ -445,7 +445,9 @@ message CancellationSnapshot {
 message CancellationOperation {
   OperationSnapshot operation = 1;
   bytes notification_message_id = 2;
-  bool driver_acknowledged = 3;
+  // True when Driver cleanup is complete or no Driver cleanup was required
+  // because the operation was already terminal before cancellation.
+  bool cleanup_confirmed = 3;
 }
 
 message OperationSnapshot {

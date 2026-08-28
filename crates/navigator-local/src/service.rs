@@ -3227,7 +3227,7 @@ impl<
                                         .map_or_else(Vec::new, |message| {
                                             message.message_id.as_uuid().as_bytes().to_vec()
                                         }),
-                                    driver_acknowledged: record.driver_acknowledged(),
+                                    cleanup_confirmed: record.cleanup_confirmed(),
                                 })
                                 .collect(),
                         })

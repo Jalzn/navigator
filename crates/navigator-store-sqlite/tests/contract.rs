@@ -1266,7 +1266,7 @@ async fn correlated_feedback_resumes_only_at_exact_durable_acceptance() {
 }
 
 #[tokio::test]
-async fn cancellation_is_durable_subtree_scoped_and_ack_is_not_terminal() {
+async fn cancellation_is_durable_subtree_scoped_and_cleanup_is_not_optimistic() {
     let CancellationScenario {
         fixture,
         scope,
@@ -1291,7 +1291,7 @@ async fn cancellation_is_durable_subtree_scoped_and_ack_is_not_terminal() {
         navigator_domain::OperationState::Cancelling
     );
     assert!(child_record.notification.is_some());
-    assert!(!child_record.driver_acknowledged());
+    assert!(!child_record.cleanup_confirmed());
     let grand_record = cancelled
         .value()
         .records
@@ -1303,6 +1303,7 @@ async fn cancellation_is_durable_subtree_scoped_and_ack_is_not_terminal() {
         navigator_domain::OperationState::Cancelled
     );
     assert!(grand_record.notification.is_none());
+    assert!(grand_record.cleanup_confirmed());
     assert_eq!(
         fixture
             .store
@@ -1388,6 +1389,14 @@ async fn assert_cancellation_replay_and_late_rule(
         record.operation.operation_id == terminal.operation_id
             && record.operation.state == navigator_domain::OperationState::Cancelled
     }));
+    let terminal_with_pending_notification = current
+        .value()
+        .records
+        .iter()
+        .find(|record| record.operation.operation_id == terminal.operation_id)
+        .unwrap();
+    assert!(terminal_with_pending_notification.notification.is_some());
+    assert!(!terminal_with_pending_notification.cleanup_confirmed());
 }
 
 async fn assert_cancelled_scope_rejects_new_work(

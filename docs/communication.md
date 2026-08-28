@@ -68,6 +68,16 @@ Session. Cross-Session ordering has no semantic meaning.
 Control traffic such as cancellation may bypass ordinary Message order through
 a separate channel or priority class. This bypass is explicit and audited.
 
+## Cancellation cleanup confirmation
+
+Each public cancellation operation exposes `cleanup_confirmed`. This is true
+when no Driver notification was needed because the operation is already
+terminal, or when the cancellation notification is present and its durable
+delivery state is accepted. A terminal operation does not override a pending,
+unknown, or failed notification: when a notification exists, only accepted
+delivery confirms cleanup. Running and cancelling operations without accepted
+notification remain unconfirmed.
+
 ## Correlation
 
 All mutable Commands, deliveries, reports, and responses carry stable
