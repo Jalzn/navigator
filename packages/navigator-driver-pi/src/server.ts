@@ -163,6 +163,11 @@ export function trustedToolCatalog(configuration: Uint8Array): import("./tools.j
   const raw = (decoded as { navigator_tool_catalog: unknown }).navigator_tool_catalog;
   if (!Array.isArray(raw) || raw.length > 64) throw new Error("invalid trusted Tool catalog");
   const seen = new Set<string>();
+  const seenNames = new Set<string>();
+  const reservedNames = new Set([
+    "navigator_command", "navigator_report", "navigator_spawn_child",
+    "navigator_send_message", "navigator_status_child", "navigator_cancel_child",
+  ]);
   const validateSchema = (schema: unknown, depth = 0): schema is Record<string, unknown> => {
     if (depth > 32 || typeof schema !== "object" || schema === null || Array.isArray(schema)) return false;
     const value = schema as Record<string, unknown>;
@@ -189,6 +194,8 @@ export function trustedToolCatalog(configuration: Uint8Array): import("./tools.j
     if (!validateSchema(value.input_schema)) throw new Error("invalid Tool schema");
     const key = value.registration_id.toLowerCase();
     if (seen.has(key)) throw new Error("duplicate Tool registration"); seen.add(key);
+    if (reservedNames.has(value.name)) throw new Error("Tool name collides with Navigator built-in");
+    if (seenNames.has(value.name)) throw new Error("duplicate Tool name"); seenNames.add(value.name);
     return { registrationId: Buffer.from(key, "hex"), name: value.name, version: value.version, inputSchema: value.input_schema as Record<string, unknown> };
   });
 }

@@ -33,6 +33,7 @@ export interface PiSession {
   abort(): Promise<void>;
   dispose(): void | Promise<void>;
   subscribe(listener: (event: unknown) => void): () => void;
+  lastAssistantText(): string;
 }
 
 export type AcceptedMessage = Readonly<{
@@ -393,7 +394,7 @@ export class PiAdapter {
   #tail: Promise<void> = Promise.resolve();
   #lastContext: import("./tools.js").DeliveryContext | undefined;
 
-  constructor(binding: InstanceBinding, session: PiSession, journal: AcceptanceJournal, bridge?: NavigatorToolBridge, deliveryObserver?: (line: string) => void) {
+  constructor(binding: InstanceBinding, session: PiSession, journal: AcceptanceJournal, bridge?: NavigatorToolBridge, deliveryObserver?: (line: string) => void, readonly implicitTerminalText = false) {
     this.#binding = binding;
     this.#session = session;
     this.#journal = journal;
@@ -465,6 +466,11 @@ export class PiAdapter {
             sha256: createHash("sha256").update(prompt).digest("hex"),
           }));
           await this.#session.prompt(prompt);
+          if (this.implicitTerminalText && this.#bridge !== undefined && !this.#bridge.terminalReported()) {
+            const text = this.#session.lastAssistantText().trim();
+            if (text.length === 0) throw new Error("implicit terminal report lacks assistant text");
+            await this.#bridge.report("succeeded", text);
+          }
         } finally {
           this.#bridge?.setActive(false);
         }

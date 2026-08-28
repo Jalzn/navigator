@@ -21,10 +21,12 @@ type RuntimeConfiguration = Readonly<{
   terminalMode?: "line";
   cwd: string;
   tools: string[];
+  hierarchyTools?: boolean;
   abortObserverPath?: string;
   promptObserverPath?: string;
   deliveryObserverPath?: string;
   journalFaultFd?: number;
+  implicitTerminalText?: boolean;
 }>;
 
 type NavigatorTrustedConfiguration = Readonly<{
@@ -102,6 +104,10 @@ async function main(): Promise<void> {
     throw new Error("Driver bootstrap file is unsafe");
   }
   const runtimeConfiguration = JSON.parse(readFileSync(bootstrapPath, "utf8")) as RuntimeConfiguration;
+  if (runtimeConfiguration.hierarchyTools !== undefined
+    && typeof runtimeConfiguration.hierarchyTools !== "boolean") {
+    throw new Error("invalid hierarchyTools configuration");
+  }
   unlinkSync(bootstrapPath);
   const runtimeRoot = resolve(required("NAVIGATOR_DRIVER_PRIVATE_ROOT"));
   const runtimeRootMetadata = lstatSync(runtimeRoot);
@@ -154,6 +160,9 @@ async function main(): Promise<void> {
       sessionFile,
       baseInstructions: trusted.base_instructions,
       tools: runtimeConfiguration.tools,
+      ...(runtimeConfiguration.hierarchyTools === undefined
+        ? {}
+        : { hierarchyTools: runtimeConfiguration.hierarchyTools }),
     };
     const session = await createNativePiSession(configuration, runtime, model, bridge,
       abortObserver === undefined && promptObserver === undefined ? undefined : {
@@ -161,7 +170,7 @@ async function main(): Promise<void> {
         ...(promptObserver === undefined ? {} : { onPrompt: (digest: string) => promptObserver.append(digest) }),
       });
     const journal = await AcceptanceJournal.open(`${configuration.sessionFile}.navigator-inbox`, binding, undefined, journalFault);
-    return new PiAdapter(binding, session, journal, bridge, deliveryObserver === undefined ? undefined : (line) => deliveryObserver.append(line));
+    return new PiAdapter(binding, session, journal, bridge, deliveryObserver === undefined ? undefined : (line) => deliveryObserver.append(line), runtimeConfiguration.implicitTerminalText === true);
   }, [
     ...PROVEN_PI_CAPABILITIES,
     ...(runtimeConfiguration.terminalMode === "line"

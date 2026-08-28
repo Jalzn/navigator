@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import hashlib
 import json
 import math
@@ -33,6 +34,7 @@ _MAX_CHANNEL_CLOSE_SECONDS = 1.0
 _MIN_CLEANUP_WAIT_SECONDS = 0.05
 _DEFAULT_STARTUP_TIMEOUT_SECONDS = 30.0
 _DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 10.0
+_DEFAULT_OPERATION_REPORT_DEADLINE_SECONDS = 600.0
 _MAX_CLEANUP_WAIT_SECONDS = 30.0
 _MAX_GROUP_OBSERVATION_SECONDS = 0.25
 _RUNTIME_PACKAGE = "navigator._runtime"
@@ -470,6 +472,8 @@ def _spawn(arguments: list[str], diagnostic_descriptor: int) -> _SpawnedProcess:
 class LocalNavigator:
     """Owns one explicitly selected navigatord child, never the durable Session."""
 
+    _PI_TOOL_ALLOWLIST = frozenset({"read", "grep", "find", "ls", "bash", "edit", "write"})
+
     def __init__(
         self,
         *,
@@ -478,20 +482,36 @@ class LocalNavigator:
         binary_sha256: Optional[str] = None,
         startup_timeout: float = _DEFAULT_STARTUP_TIMEOUT_SECONDS,
         shutdown_timeout: float = _DEFAULT_SHUTDOWN_TIMEOUT_SECONDS,
+        operation_report_deadline: float = _DEFAULT_OPERATION_REPORT_DEADLINE_SECONDS,
         capabilities: tuple[str, ...] = _CAPABILITIES,
         driver_catalog: Optional[os.PathLike[str]] = None,
         driver_catalog_sha256: Optional[str] = None,
         driver_profiles: tuple[str, ...] = (),
+        pi_auth_path: Optional[os.PathLike[str]] = None,
+        codex_auth_path: Optional[os.PathLike[str]] = None,
+        pi_provider: str = "faux",
+        pi_model: str = "faux-1",
+        pi_cwd: Optional[os.PathLike[str]] = None,
+        pi_tools: tuple[str, ...] = (),
+        pi_hierarchy_tools: bool = True,
     ) -> None:
         self._binary = Path(binary) if binary is not None else None
         self._digest = binary_sha256
         self._data_dir = Path(data_dir)
         self._startup_timeout = startup_timeout
         self._shutdown_timeout = shutdown_timeout
+        self._operation_report_deadline = operation_report_deadline
         self._capabilities = capabilities
         self._driver_catalog = Path(driver_catalog) if driver_catalog is not None else None
         self._driver_catalog_sha256 = driver_catalog_sha256
         self._driver_profiles = driver_profiles
+        self._pi_auth_path = Path(pi_auth_path) if pi_auth_path is not None else None
+        self._codex_auth_path = Path(codex_auth_path) if codex_auth_path is not None else None
+        self._pi_provider = pi_provider
+        self._pi_model = pi_model
+        self._pi_cwd = Path(pi_cwd) if pi_cwd is not None else None
+        self._pi_tools = pi_tools
+        self._pi_hierarchy_tools = pi_hierarchy_tools
         self._runtime: Optional[Path] = None
         self._process: Optional[_SpawnedProcess] = None
         self._client: Any = None
@@ -504,12 +524,40 @@ class LocalNavigator:
             raise InvalidRequest(1, "Invalid startup timeout", RetryClass.NEVER)
         if not math.isfinite(self._shutdown_timeout) or self._shutdown_timeout < 0:
             raise InvalidRequest(1, "Invalid shutdown timeout", RetryClass.NEVER)
+        if (
+            not math.isfinite(self._operation_report_deadline)
+            or self._operation_report_deadline <= 0
+            or self._operation_report_deadline > 86_400
+        ):
+            raise InvalidRequest(1, "Invalid operation report deadline", RetryClass.NEVER)
         if self._cleanup_task is not None:
             if not self._cleanup_task.done():
                 raise InvalidRequest(1, "Managed cleanup is in progress", RetryClass.NEVER)
             self._cleanup_task = None
         if (self._binary is None) != (self._digest is None):
             raise InvalidRequest(1, "Executable override identity is incomplete", RetryClass.NEVER)
+        if any(not isinstance(tool, str) for tool in self._pi_tools) or len(
+            self._pi_tools
+        ) != len(set(self._pi_tools)) or any(
+            tool not in self._PI_TOOL_ALLOWLIST for tool in self._pi_tools
+        ):
+            raise InvalidRequest(1, "Pi tools must be unique and allowlisted", RetryClass.NEVER)
+        if not isinstance(self._pi_hierarchy_tools, bool):
+            raise InvalidRequest(1, "Pi hierarchy tools selection must be boolean", RetryClass.NEVER)
+        pi_cwd: Optional[Path] = None
+        if self._pi_cwd is not None:
+            try:
+                supplied_details = self._pi_cwd.lstat()
+                pi_cwd = self._pi_cwd.resolve(strict=True)
+                resolved_details = pi_cwd.stat()
+            except (FileNotFoundError, OSError) as error:
+                raise InvalidRequest(1, "Pi working directory is invalid", RetryClass.NEVER) from error
+            if (
+                stat.S_ISLNK(supplied_details.st_mode)
+                or not stat.S_ISDIR(resolved_details.st_mode)
+                or resolved_details.st_uid != os.getuid()
+            ):
+                raise InvalidRequest(1, "Pi working directory must be an owned directory, not a symbolic link", RetryClass.NEVER)
         bundled: Optional[_BundledRuntime] = None
         if self._binary is None:
             bundled = _bundled_runtime()
@@ -573,11 +621,50 @@ class LocalNavigator:
                     )
                 workspace = runtime / "workspace"
                 workspace.mkdir(mode=0o700)
-                auth = runtime / "pi-auth.json"
-                auth.write_text("{}\n", encoding="ascii")
-                auth.chmod(0o600)
+                provider_module: Optional[str]
+                if self._pi_auth_path is not None and self._codex_auth_path is not None:
+                    raise InvalidRequest(1, "Pi auth and Codex auth are mutually exclusive", RetryClass.NEVER)
+                if self._pi_auth_path is None and self._codex_auth_path is None:
+                    auth = runtime / "pi-auth.json"
+                    auth.write_text("{}\n", encoding="ascii")
+                    auth.chmod(0o600)
+                    provider_module = os.fspath(copied[bundled.acceptance_provider.path])
+                else:
+                    source_auth = (self._pi_auth_path or self._codex_auth_path)
+                    assert source_auth is not None
+                    source_auth = source_auth.resolve(strict=True)
+                    auth_details = source_auth.lstat()
+                    if (
+                        not stat.S_ISREG(auth_details.st_mode)
+                        or source_auth.is_symlink()
+                        or auth_details.st_uid != os.getuid()
+                        or stat.S_IMODE(auth_details.st_mode) & 0o077
+                    ):
+                        raise InvalidRequest(1, "Pi auth file must be a private regular file", RetryClass.NEVER)
+                    if self._codex_auth_path is None:
+                        auth = source_auth
+                    else:
+                        try:
+                            codex_auth = json.loads(source_auth.read_text(encoding="utf-8"))
+                            tokens = codex_auth["tokens"]
+                            access = tokens["access_token"]
+                            refresh = tokens["refresh_token"]
+                            account_id = tokens["account_id"]
+                            payload = access.split(".")[1]
+                            decoded = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+                            expires = int(decoded["exp"]) * 1000
+                            if not all(isinstance(value, str) and value for value in (access, refresh, account_id)):
+                                raise ValueError("invalid token fields")
+                        except (KeyError, ValueError, TypeError, json.JSONDecodeError) as error:
+                            raise InvalidRequest(1, "Codex auth file is incompatible", RetryClass.NEVER) from error
+                        auth = runtime / "pi-auth.json"
+                        auth.write_text(json.dumps({"openai-codex": {
+                            "type": "oauth", "access": access, "refresh": refresh,
+                            "expires": expires, "accountId": account_id,
+                        }}, separators=(",", ":")) + "\n", encoding="utf-8")
+                        auth.chmod(0o600)
+                    provider_module = None
                 entrypoint = copied[bundled.pi_entrypoint.path]
-                provider = copied[bundled.acceptance_provider.path]
                 node = copied[bundled.node.path]
                 driver_uuid = (
                     f"{bundled.driver_id[:8]}-{bundled.driver_id[8:12]}-"
@@ -601,12 +688,14 @@ class LocalNavigator:
                             "ownership_channel": "dedicated_fd",
                             "capabilities": [{"name": "durable.acceptance", "version": 1}],
                             "bootstrap_configuration": {
-                                "provider": "faux",
-                                "model": "faux-1",
+                                "provider": self._pi_provider,
+                                "model": self._pi_model,
                                 "authPath": os.fspath(auth),
-                                "providerModule": os.fspath(provider),
-                                "cwd": os.fspath(workspace),
-                                "tools": [],
+                                **({"providerModule": provider_module} if provider_module is not None else {}),
+                                "cwd": os.fspath(pi_cwd or workspace),
+                                "tools": list(self._pi_tools),
+                                "hierarchyTools": self._pi_hierarchy_tools,
+                                "implicitTerminalText": self._pi_auth_path is not None or self._codex_auth_path is not None,
                             },
                             "trusted_artifacts": [
                                 {
@@ -656,6 +745,8 @@ class LocalNavigator:
                 os.fspath(credential_file),
                 "--shutdown-timeout-ms",
                 str(max(1, int(self._shutdown_timeout * 1000))),
+                "--operation-report-deadline-ms",
+                str(max(1, int(self._operation_report_deadline * 1000))),
             ]
             if catalog is not None:
                 arguments.extend(("--driver-catalog", os.fspath(catalog)))

@@ -134,15 +134,33 @@ def main() -> None:
     provider.parent.mkdir(parents=True)
     provider.write_text(
         "import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '../pi/node_modules/@earendil-works/pi-ai/dist/index.js';\n"
+        "function payloadFrom(context) {\n"
+        "  const message = [...context.messages].reverse().find((item) => item.role === 'user');\n"
+        "  const content = typeof message?.content === 'string' ? message.content : Array.isArray(message?.content) ? message.content.filter((item) => item.type === 'text').map((item) => item.text).join('\\n') : '';\n"
+        "  const field = (name) => { const match = content.match(new RegExp('\\\"' + name + '\\\"\\\\s*:\\\\s*\\\"((?:\\\\\\\\.|[^\\\"])*)\\\"')); if (match === null) return ''; try { return JSON.parse(String.fromCharCode(34) + match[1] + String.fromCharCode(34)); } catch { return match[1]; } };\n"
+        "  const raw = field('task') || content.trim() || 'Tema não informado';\n"
+        "  try { const envelope = JSON.parse(raw); if (envelope && typeof envelope === 'object') return { task: envelope.topic || 'Tema não informado', role: envelope.role || 'writer' }; } catch {}\n"
+        "  return { task: raw, role: 'writer' };\n"
+        "}\n"
+        "function localReport({ task, role }) {\n"
+        "  if (role === 'orchestrator') return `# Estratégia\\n\\nTema preservado: **${task}**.\\n\\nA pesquisa será decomposta em uma análise principal e um contraponto, seguida de revisão crítica e síntese.`;\n"
+        "  if (role === 'planner') return `# Plano de investigação\\n\\n1. Delimitar os conceitos centrais de **${task}**.\\n2. Construir uma explicação progressiva.\\n3. Identificar limitações, ambiguidades e contrapontos.\\n4. Revisar antes da síntese final.`;\n"
+        "  if (role === 'research-a') return `# Análise principal\\n\\nA frente principal sobre **${task}** foi processada pelo executor local. O ambiente atual não possui um modelo de conhecimento conectado, portanto não gera afirmações factuais sobre o tema.`;\n"
+        "  if (role === 'research-b') return `# Contraponto\\n\\nA frente de riscos e lacunas sobre **${task}** foi processada. Sem um provedor de modelo ou fontes, conclusões específicas seriam inventadas e foram deliberadamente omitidas.`;\n"
+        "  if (role === 'critic') return `# Revisão crítica\\n\\nA estrutura multiagente e a troca de mensagens foram validadas para **${task}**. Ainda falta uma fonte de conhecimento para avaliar precisão, cobertura e evidências do conteúdo.`;\n"
+        "  return `# Relatório local\\n\\n**Tema:** ${task}\\n\\n## Resumo\\n\\nA pesquisa percorreu toda a topologia multiagente do Navigator: coordenação, planejamento, duas análises paralelas, revisão crítica e redação.\\n\\n## Resultado\\n\\nO fluxo durável foi concluído corretamente, mas este ambiente local usa um provedor demonstrativo, sem acesso à web e sem um modelo de linguagem conectado. Por isso, ele não consegue produzir ainda uma resposta factual confiável sobre o tema.\\n\\n## Limitação atual\\n\\nO Navigator coordena e preserva o trabalho; o conteúdo precisa vir de um provedor de modelo. Repetir textos intermediários como se fossem conhecimento seria enganoso.\\n\\n## Próximo passo\\n\\nConectar um modelo local ou uma API de modelo ao driver Pi. A topologia e o canvas poderão permanecer exatamente como estão.`;\n"
+        "}\n"
         "export function register(runtime) {\n"
         "  const faux = fauxProvider({ tokensPerSecond: 1000 });\n"
-        "  faux.setResponses([\n"
-        "    fauxAssistantMessage(fauxToolCall('navigator_report', { kind: 'succeeded', payload: 'done' }), { stopReason: 'toolUse' }),\n"
-        "    fauxAssistantMessage('settled'),\n"
-        "  ]);\n"
+        "  const settled = () => fauxAssistantMessage('settled');\n"
+        "  const report = (context) => {\n"
+        "    faux.appendResponses([report, settled()]);\n"
+        "    return fauxAssistantMessage(fauxToolCall('navigator_report', { kind: 'succeeded', payload: localReport(payloadFrom(context)) }), { stopReason: 'toolUse' });\n"
+        "  };\n"
+        "  faux.setResponses([report, settled()]);\n"
         "  runtime.registerNativeProvider(faux.provider);\n"
         "}\n",
-        encoding="ascii",
+        encoding="utf-8",
     )
     provider.chmod(0o644)
     if destination.exists():

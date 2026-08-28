@@ -130,13 +130,35 @@ impl AuthorityProfile {
         self.delegable.iter()
     }
 
-    fn permits_active(&self, requested: &ScopedCapability) -> bool {
-        self.active.contains(requested)
-    }
-
     fn permits_delegation(&self, requested: &ScopedCapability) -> bool {
         self.delegable.contains(requested)
     }
+
+    fn permits_active_effect(&self, requested: &ScopedCapability, session_id: SessionId) -> bool {
+        self.active.contains(requested)
+            || self.active.contains(&session_parent(requested, session_id))
+    }
+
+    fn permits_effect_delegation(
+        &self,
+        requested: &ScopedCapability,
+        session_id: SessionId,
+    ) -> bool {
+        self.delegable.contains(requested)
+            || self
+                .delegable
+                .contains(&session_parent(requested, session_id))
+    }
+}
+
+fn session_parent(requested: &ScopedCapability, session_id: SessionId) -> ScopedCapability {
+    ScopedCapability::new(
+        requested.capability.clone(),
+        match &requested.resource {
+            ResourceScope::Operation(_) => ResourceScope::Session(session_id),
+            _ => requested.resource.clone(),
+        },
+    )
 }
 
 #[derive(Deserialize)]
@@ -243,11 +265,13 @@ impl AuthorityCeilings<'_> {
         grant: Option<&Grant>,
         now: Timestamp,
     ) -> Result<AuthorityDecision, AuthorityError> {
-        if !self.session.permits_active(requested)
-            || !self.parent.permits_delegation(requested)
-            || !self.template.permits_active(requested)
-            || !self.relationship.permits_active(requested)
-            || !self.subject.permits_active(requested)
+        if !self.session.permits_active_effect(requested, session_id)
+            || !self.parent.permits_effect_delegation(requested, session_id)
+            || !self.template.permits_active_effect(requested, session_id)
+            || !self
+                .relationship
+                .permits_active_effect(requested, session_id)
+            || !self.subject.permits_active_effect(requested, session_id)
         {
             return Err(AuthorityError::Denied);
         }
@@ -272,5 +296,80 @@ impl AuthorityCeilings<'_> {
             authority: requested.clone(),
             origins,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn id<T>(value: u128, make: impl FnOnce(Uuid) -> Result<T, crate::InvalidIdentity>) -> T {
+        make(Uuid::from_u128(value)).unwrap()
+    }
+
+    #[test]
+    fn session_authority_covers_effects_in_its_bound_operation_scope() {
+        let session_id = id(1, SessionId::from_uuid);
+        let participant_id = id(2, ParticipantId::from_uuid);
+        let capability = Capability::new("tool.records.lookup").unwrap();
+        let session_rule =
+            ScopedCapability::new(capability.clone(), ResourceScope::Session(session_id));
+        let profile = AuthorityProfile::new([session_rule.clone()], [session_rule]).unwrap();
+        let requested = ScopedCapability::new(
+            capability,
+            ResourceScope::Operation(id(3, OperationId::from_uuid)),
+        );
+
+        assert!(
+            AuthorityCeilings {
+                session: &profile,
+                parent: &profile,
+                template: &profile,
+                relationship: &profile,
+                subject: &profile,
+            }
+            .authorize_effect(
+                participant_id,
+                session_id,
+                &requested,
+                None,
+                Timestamp::new(0, 0).unwrap(),
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn session_authority_never_covers_an_effect_bound_to_another_session() {
+        let granted_session = id(10, SessionId::from_uuid);
+        let requested_session = id(11, SessionId::from_uuid);
+        let participant_id = id(12, ParticipantId::from_uuid);
+        let capability = Capability::new("tool.records.lookup").unwrap();
+        let session_rule =
+            ScopedCapability::new(capability.clone(), ResourceScope::Session(granted_session));
+        let profile = AuthorityProfile::new([session_rule.clone()], [session_rule]).unwrap();
+        let requested = ScopedCapability::new(
+            capability,
+            ResourceScope::Operation(id(13, OperationId::from_uuid)),
+        );
+
+        assert!(
+            AuthorityCeilings {
+                session: &profile,
+                parent: &profile,
+                template: &profile,
+                relationship: &profile,
+                subject: &profile,
+            }
+            .authorize_effect(
+                participant_id,
+                requested_session,
+                &requested,
+                None,
+                Timestamp::new(0, 0).unwrap(),
+            )
+            .is_err()
+        );
     }
 }

@@ -20,6 +20,7 @@ export type TrustedPiConfiguration = Readonly<{
   sessionFile: string;
   baseInstructions: string;
   tools: string[];
+  hierarchyTools?: boolean;
 }>;
 
 export type NativePiObserver = Readonly<{
@@ -53,6 +54,9 @@ export function validateTrustedConfiguration(value: TrustedPiConfiguration): voi
   if (value.tools.length > TOOL_ALLOWLIST.size || value.tools.some((tool) => !TOOL_ALLOWLIST.has(tool))) {
     throw new Error("trusted Pi tool is not allowlisted");
   }
+  if (value.hierarchyTools !== undefined && typeof value.hierarchyTools !== "boolean") {
+    throw new Error("trusted Pi hierarchy tool selection is invalid");
+  }
 }
 
 export async function createNativePiSession(
@@ -78,12 +82,16 @@ export async function createNativePiSession(
     compaction: { enabled: false },
     retry: { enabled: false },
   });
-  const navigatorTools = bridge?.tools() ?? [];
+  const navigatorTools = bridge?.tools(configuration.hierarchyTools !== false) ?? [];
+  const activeToolNames = [...configuration.tools, ...navigatorTools.map((tool) => tool.name)];
+  if (new Set(activeToolNames).size !== activeToolNames.length) {
+    throw new Error("Navigator Tool name collides with configured Pi built-in");
+  }
   const { session } = await createAgentSession({
     cwd: configuration.cwd,
     modelRuntime,
     model,
-    tools: [...configuration.tools, ...navigatorTools.map((tool) => tool.name)],
+    tools: activeToolNames,
     resourceLoader,
     sessionManager,
     settingsManager,
@@ -103,6 +111,12 @@ export async function createNativePiSession(
     abort: async () => { observer?.onAbort?.(); await session.abort(); },
     dispose: () => session.dispose(),
     subscribe: (listener) => session.subscribe(listener),
+    lastAssistantText: () => {
+      const message = [...session.messages].reverse().find((item) => item.role === "assistant") as
+        | { role: "assistant"; content: Array<{ type: string; text?: string }> }
+        | undefined;
+      return message?.content.filter((item) => item.type === "text").map((item) => item.text ?? "").join("\n") ?? "";
+    },
   } as PiSession & { sessionFile?: string };
 }
 

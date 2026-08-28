@@ -121,9 +121,27 @@ test("native Pi executes an authenticated hierarchy tool through its waiter brid
   } finally { bridge.setActive(false); await session.dispose(); await rm(directory, { recursive: true, force: true }); }
 });
 
+test("hierarchy-disabled catalog keeps report and registered tools only", () => {
+  const bridge = new NavigatorToolBridge(async () => undefined);
+  bridge.configureToolCatalog([{
+    registrationId: Buffer.alloc(16, 7),
+    name: "Records.Lookup",
+    version: "V1",
+    inputSchema: { type: "object" },
+  }]);
+  const names = bridge.tools(false).map((tool) => tool.name);
+  assert.deepEqual(names, [
+    "navigator_report",
+    "Records.Lookup",
+  ]);
+  assert.equal(names.some((name) => name.includes("spawn") || name.includes("send")
+    || name.includes("status") || name.includes("cancel") || name === "navigator_command"), false);
+});
+
 test("trusted Tool catalog exposes only fixed registrations and rejects catalog downgrade", async () => {
   const encoded = (name: string) => Buffer.from(JSON.stringify({ navigator_tool_catalog: [{ registration_id: "07".repeat(16), name, version: "V1", input_schema: { type: "object" } }] }));
   assert.equal(trustedToolCatalog(encoded("Records.Lookup"))[0]?.name, "Records.Lookup");
+  assert.equal(trustedToolCatalog(encoded("argus_workspace_read"))[0]?.name, "argus_workspace_read");
   assert.deepEqual(trustedToolCatalog(Buffer.from(JSON.stringify({ navigator_tool_catalog: [] }))), []);
   for (const malformed of [
     Buffer.from("not-json"),
@@ -138,6 +156,14 @@ test("trusted Tool catalog exposes only fixed registrations and rejects catalog 
     { registration_id: "07".repeat(16), name: "Records.Lookup", version: "V1", input_schema: { type: "object" }, selector: "arbitrary" },
     { registration_id: "07".repeat(16), name: "Records.Lookup", version: "V1", input_schema: { type: "object", arbitrary: true } },
   ]) assert.throws(() => trustedToolCatalog(Buffer.from(JSON.stringify({ navigator_tool_catalog: [malformed] }))));
+  const catalogWith = (names: string[]) => Buffer.from(JSON.stringify({
+    navigator_tool_catalog: names.map((name, index) => ({
+      registration_id: (index + 1).toString(16).padStart(32, "0"),
+      name, version: "V1", input_schema: { type: "object" },
+    })),
+  }));
+  assert.throws(() => trustedToolCatalog(catalogWith(["duplicate", "duplicate"])), /duplicate Tool name/);
+  assert.throws(() => trustedToolCatalog(catalogWith(["navigator_report"])), /collides with Navigator built-in/);
   const bridge = new NavigatorToolBridge(
     async () => undefined,
     async () => { throw new Error("unused"); },
@@ -155,14 +181,13 @@ test("trusted Tool catalog exposes only fixed registrations and rejects catalog 
   );
   bridge.configureToolCatalog([{ registrationId: Buffer.alloc(16, 7), name: "Records.Lookup", version: "V1", inputSchema: { type: "object", additionalProperties: false } }]);
   const names = bridge.tools().map((tool) => tool.name);
-  assert(names.includes(`navigator_registered_tool_${"07".repeat(16)}`));
-  assert(!names.includes("Records.Lookup"));
+  assert(names.includes("Records.Lookup"));
   assert(!names.includes("untrusted.tool"));
   bridge.setActive(true, {
     operationId: Buffer.alloc(16, 1), messageId: Buffer.alloc(16, 2),
     deliveryAttemptId: Buffer.alloc(16, 3), inReplyTo: Buffer.alloc(16, 4),
   });
-  const registered = bridge.tools().find((tool) => tool.name === `navigator_registered_tool_${"07".repeat(16)}`);
+  const registered = bridge.tools().find((tool) => tool.name === "Records.Lookup");
   assert(registered !== undefined);
   const invoke = registered.execute as (...arguments_: unknown[]) => Promise<{ content: Array<{ type: string; text?: string }>; details: unknown }>;
   const observed = await invoke("call-1", {});
@@ -176,6 +201,16 @@ test("trusted Tool catalog exposes only fixed registrations and rejects catalog 
   const command = bridge.tools().find((tool) => tool.name === "navigator_command");
   assert(command !== undefined);
   assert(!JSON.stringify(command.parameters).includes('"tool"'));
+  assert.throws(() => new NavigatorToolBridge(async () => undefined).configureToolCatalog([
+    { registrationId: Buffer.alloc(16, 1), name: "duplicate", version: "1", inputSchema: {} },
+    { registrationId: Buffer.alloc(16, 2), name: "duplicate", version: "1", inputSchema: {} },
+  ]), /duplicate trusted Tool name/);
+  assert.throws(() => new NavigatorToolBridge(async () => undefined).configureToolCatalog([
+    { registrationId: Buffer.alloc(16, 1), name: "navigator_report", version: "1", inputSchema: {} },
+  ]), /collides with Navigator built-in/);
+  assert.throws(() => new NavigatorToolBridge(async () => undefined).configureToolCatalog([
+    { registrationId: Buffer.alloc(16, 1), name: "bad name", version: "1", inputSchema: {} },
+  ]), /invalid trusted Tool name/);
   assert.throws(() => bridge.configureToolCatalog([{ registrationId: Buffer.alloc(16, 7), name: "Records.Lookup", version: "V0", inputSchema: { type: "object" } }]));
 
   const emptyBridge = new NavigatorToolBridge(async () => undefined);
@@ -195,6 +230,25 @@ test("trusted Tool catalog exposes only fixed registrations and rejects catalog 
   admitPendingTool(127);
   assert.throws(() => admitPendingTool(128));
   assert.throws(() => admitPendingTool(129));
+});
+
+test("registered Tool names cannot collide with configured Pi built-ins", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "navigator-native-tool-collision-"));
+  const faux = fauxProvider({ tokensPerSecond: 1_000 });
+  const runtime = await ModelRuntime.create({ modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
+  runtime.registerNativeProvider(faux.provider);
+  const bridge = new NavigatorToolBridge(async () => undefined);
+  bridge.configureToolCatalog([{
+    registrationId: Buffer.alloc(16, 7), name: "read", version: "V1", inputSchema: {},
+  }]);
+  try {
+    await assert.rejects(() => createNativePiSession({
+      cwd: directory, sessionFile: join(directory, "session.jsonl"),
+      baseInstructions: "Collision.", tools: ["read"],
+    }, runtime, faux.getModel(), bridge), /collides with configured Pi built-in/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("native abort observer fires at the real session boundary without changing abort", async () => {

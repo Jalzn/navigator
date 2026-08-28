@@ -36,7 +36,7 @@ function registeredTool(outputBase64: string) {
     inputSchema: { type: "object", additionalProperties: false },
   }]);
   bridge.setActive(true, context);
-  const tool = bridge.tools().find((candidate) => candidate.name === `navigator_registered_tool_${registrationId.toString("hex")}`);
+  const tool = bridge.tools().find((candidate) => candidate.name === "Records.Lookup");
   assert(tool !== undefined);
   return tool.execute as (...arguments_: unknown[]) => Promise<{
     content: Array<{ type: string; text?: string }>;

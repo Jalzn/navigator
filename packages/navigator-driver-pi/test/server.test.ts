@@ -50,6 +50,7 @@ class Session implements PiSession {
   async abort(): Promise<void> { this.aborts += 1; await this.abortGate; }
   dispose(): void { this.disposals += 1; }
   subscribe(): () => void { return () => undefined; }
+  lastAssistantText(): string { return ""; }
 }
 
 function metadata(envelope: Envelope): RequestMetadata {
@@ -137,7 +138,7 @@ test("real Tool result handler preserves complete artifacts and rejects malforme
   }) } });
   sign(secret, deliver, participant, attempt); await server.handle(toBinary(EnvelopeSchema, deliver));
   while (native.prompts.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
-  const tool = bridge.tools().find((value) => value.name === `navigator_registered_tool_${"44".repeat(16)}`)!;
+  const tool = bridge.tools().find((value) => value.name === "Records.Lookup")!;
   const artifact = create(ToolArtifactReferenceSchema, {
     artifactId: Buffer.alloc(16, 72), sessionId, creatorParticipantId: participant,
     creatorOperationId: operationId, mediaType: "application/octet-stream", size: 3n, sha256: Buffer.alloc(32, 73),

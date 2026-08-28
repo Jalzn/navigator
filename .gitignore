@@ -6,3 +6,6 @@ coverage/
 .DS_Store
 target/
 .coverage/
+__pycache__/
+*.py[cod]
+.navigator-test-build.lock

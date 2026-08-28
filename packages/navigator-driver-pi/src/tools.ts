@@ -69,6 +69,7 @@ export class NavigatorToolBridge {
   #reportsAllowed = false;
   #toolCatalog: TrustedToolCatalogEntry[] = [];
   #toolCatalogConfigured = false;
+  #terminalReported = false;
 
   constructor(
     emitReport: (report: ReportEmission) => Promise<void>,
@@ -87,9 +88,20 @@ export class NavigatorToolBridge {
   }
 
   setActive(active: boolean, context?: DeliveryContext, reportsAllowed = true): void {
+    if (active) this.#terminalReported = false;
     this.#active = active;
     this.#context = active ? context : undefined;
     this.#reportsAllowed = active && reportsAllowed;
+  }
+
+  terminalReported(): boolean { return this.#terminalReported; }
+
+  async report(kind: ReportKindName, payload: string): Promise<void> {
+    if (!this.#active || !this.#reportsAllowed) throw new Error("report requires an active Navigator delivery");
+    const encoded = new TextEncoder().encode(payload);
+    if (encoded.length > 65536) throw new Error("Navigator report exceeds bound");
+    await this.#emitReport({ kind, payload: encoded });
+    if (["succeeded", "failed", "cancelled", "uncertain"].includes(kind)) this.#terminalReported = true;
   }
 
   context(): DeliveryContext | undefined {
@@ -102,11 +114,27 @@ export class NavigatorToolBridge {
       if (identity(this.#toolCatalog) !== identity(entries)) throw new Error("Tool catalog conflict");
       return;
     }
+    const reserved = new Set([
+      "navigator_command",
+      "navigator_report",
+      "navigator_spawn_child",
+      "navigator_send_message",
+      "navigator_status_child",
+      "navigator_cancel_child",
+    ]);
+    const names = new Set<string>();
+    for (const entry of entries) {
+      if (!/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(entry.name)
+        || Buffer.byteLength(entry.name) > 128) throw new Error("invalid trusted Tool name");
+      if (reserved.has(entry.name)) throw new Error("trusted Tool name collides with Navigator built-in");
+      if (names.has(entry.name)) throw new Error("duplicate trusted Tool name");
+      names.add(entry.name);
+    }
     this.#toolCatalog = [...entries];
     this.#toolCatalogConfigured = true;
   }
 
-  tools(): ToolDefinition[] {
+  tools(includeHierarchy = true): ToolDefinition[] {
     const commandTool = defineTool({
       name: "navigator_command",
       label: "Navigator command",
@@ -124,7 +152,7 @@ export class NavigatorToolBridge {
         if (params.action === "report") {
           const kinds = new Set<ReportKindName>(["progress", "question", "blocked", "succeeded", "failed", "cancelled", "uncertain"]);
           if (!kinds.has(params.kind as ReportKindName)) throw new Error("invalid report kind");
-          await this.#emitReport({ kind: params.kind as ReportKindName, payload: new TextEncoder().encode(params.payload ?? "") });
+          await this.report(params.kind as ReportKindName, params.payload ?? "");
           return { content: [{ type: "text" as const, text: "Navigator durably received the report." }], details: {} };
         }
         const requestId = identifier(params.request_id);
@@ -138,7 +166,7 @@ export class NavigatorToolBridge {
         return { content: [{ type: "text" as const, text: result }], details: {} };
       },
     });
-    const tools = [defineTool({
+    const reportTool = defineTool({
       name: "navigator_report",
       label: "Navigator report",
       description: "Report bounded progress, a question, or a terminal operation outcome to Navigator.",
@@ -152,12 +180,11 @@ export class NavigatorToolBridge {
       }),
       execute: async (_toolCallId, params) => {
         if (this.#context === undefined || !this.#reportsAllowed) throw new Error("report requires an active Navigator delivery");
-        const payload = new TextEncoder().encode(params.payload);
-        if (payload.length > 65536) throw new Error("Navigator report exceeds bound");
-        await this.#emitReport({ kind: params.kind, payload });
+        await this.report(params.kind, params.payload);
         return { content: [{ type: "text", text: "Navigator durably received the report." }], details: {} };
       },
-    }), defineTool({
+    });
+    const hierarchyTools = [defineTool({
       name: "navigator_spawn_child",
       label: "Spawn Navigator child",
       description: "Atomically create an authorized direct child and its first operation.",
@@ -202,7 +229,7 @@ export class NavigatorToolBridge {
       },
     }))];
     const registered = this.#toolCatalog.map((entry) => defineTool({
-      name: `navigator_registered_tool_${Buffer.from(entry.registrationId).toString("hex")}`,
+      name: entry.name,
       label: entry.name,
       description: `Invoke trusted Navigator Tool ${entry.name}@${entry.version}.`,
       parameters: Type.Unsafe(entry.inputSchema),
@@ -216,6 +243,11 @@ export class NavigatorToolBridge {
         return { content: [{ type: "text", text: decodeToolOutput(result.outputBase64) }], details: { artifacts: result.artifacts } };
       },
     }));
-    return [commandTool, ...tools, ...registered];
+    return [
+      ...(includeHierarchy ? [commandTool] : []),
+      reportTool,
+      ...(includeHierarchy ? hierarchyTools : []),
+      ...registered,
+    ];
   }
 }

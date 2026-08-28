@@ -174,7 +174,15 @@ async def test_packaged_runtime_v2_generates_private_strict_pi_catalog(
 
     monkeypatch.setattr(connection, "_spawn", inspect_spawn)
     data = tmp_path / "data"
-    context = Navigator.local(data_dir=data, startup_timeout=1.0)
+    worktree = tmp_path / "agent-worktree"
+    worktree.mkdir()
+    context = Navigator.local(
+        data_dir=data,
+        startup_timeout=1.0,
+        pi_cwd=worktree,
+        pi_tools=("read", "grep", "edit"),
+        pi_hierarchy_tools=False,
+    )
     with pytest.raises(TransportUnavailable, match="exited during startup"):
         async with context:
             raise AssertionError("fixture daemon exits")
@@ -183,15 +191,68 @@ async def test_packaged_runtime_v2_generates_private_strict_pi_catalog(
     assert isinstance(arguments, list)
     assert arguments[arguments.index("--driver-entry") + 1] == "pi"
     assert arguments[arguments.index("--shutdown-timeout-ms") + 1] == "10000"
+    assert arguments[arguments.index("--operation-report-deadline-ms") + 1] == "600000"
     assert observed["catalog_mode"] == 0o600
     assert observed["auth_mode"] == 0o600
-    assert observed["workspace_mode"] == 0o700
+    assert observed["workspace_mode"] == stat.S_IMODE(worktree.stat().st_mode)
     assert observed["artifact_modes"] == [0o700, 0o600, 0o600]
     entry = observed["catalog"]["entries"]["pi"]  # type: ignore[index]
     assert entry["driver_id"] == "00000000-0000-0000-0000-000000000001"
     assert entry["arguments"][0] == "--preserve-symlinks"
     assert entry["ownership_channel"] == "dedicated_fd"
     assert entry["capabilities"] == [{"name": "durable.acceptance", "version": 1}]
+    assert entry["bootstrap_configuration"]["cwd"] == os.fspath(worktree.resolve())
+    assert entry["bootstrap_configuration"]["tools"] == ["read", "grep", "edit"]
+    assert entry["bootstrap_configuration"]["hierarchyTools"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pi_tools", (("python",), ("read", "read")))
+async def test_managed_local_rejects_non_allowlisted_or_duplicate_pi_tools_before_side_effects(
+    tmp_path: Path, pi_tools: tuple[str, ...]
+) -> None:
+    data = tmp_path / "must-not-exist"
+    with pytest.raises(InvalidRequest, match="Pi tools must be unique and allowlisted"):
+        async with Navigator.local(data_dir=data, pi_tools=pi_tools):
+            raise AssertionError("invalid tool selection must not launch")
+    assert not data.exists()
+
+
+@pytest.mark.asyncio
+async def test_managed_local_rejects_non_boolean_hierarchy_selection_before_side_effects(
+    tmp_path: Path,
+) -> None:
+    data = tmp_path / "must-not-exist"
+    with pytest.raises(InvalidRequest, match="hierarchy tools selection must be boolean"):
+        async with Navigator.local(data_dir=data, pi_hierarchy_tools="false"):  # type: ignore[arg-type]
+            raise AssertionError("invalid hierarchy selection must not launch")
+    assert not data.exists()
+
+
+@pytest.mark.asyncio
+async def test_managed_local_rejects_symlink_pi_working_directory_before_side_effects(
+    tmp_path: Path,
+) -> None:
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    linked = tmp_path / "linked-worktree"
+    linked.symlink_to(worktree, target_is_directory=True)
+    data = tmp_path / "must-not-exist"
+    with pytest.raises(InvalidRequest, match="must be an owned directory"):
+        async with Navigator.local(data_dir=data, pi_cwd=linked):
+            raise AssertionError("symbolic working directory must not launch")
+    assert not data.exists()
+
+
+@pytest.mark.asyncio
+async def test_managed_local_rejects_missing_pi_working_directory_before_side_effects(
+    tmp_path: Path,
+) -> None:
+    data = tmp_path / "must-not-exist"
+    with pytest.raises(InvalidRequest, match="Pi working directory is invalid"):
+        async with Navigator.local(data_dir=data, pi_cwd=tmp_path / "missing"):
+            raise AssertionError("missing working directory must not launch")
+    assert not data.exists()
 
 
 def _daemon() -> Path:
@@ -829,6 +890,27 @@ async def test_non_finite_or_negative_shutdown_timeout_fails_before_side_effects
         shutdown_timeout=timeout,
     )
     with pytest.raises(InvalidRequest, match="shutdown timeout"):
+        async with context:
+            raise AssertionError("invalid deadline must not launch")
+    assert not data.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("deadline", (float("nan"), float("inf"), 0.0, -1.0, 86_401.0))
+async def test_invalid_operation_report_deadline_fails_before_side_effects(
+    tmp_path: Path, deadline: float
+) -> None:
+    executable = tmp_path / "daemon"
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o700)
+    data = tmp_path / "absent"
+    context = Navigator.local(
+        binary=executable,
+        binary_sha256=_digest(executable),
+        data_dir=data,
+        operation_report_deadline=deadline,
+    )
+    with pytest.raises(InvalidRequest, match="operation report deadline"):
         async with context:
             raise AssertionError("invalid deadline must not launch")
     assert not data.exists()

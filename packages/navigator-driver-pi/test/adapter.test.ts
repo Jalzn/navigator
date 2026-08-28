@@ -61,6 +61,9 @@ class DeterministicPi implements PiSession {
   subscribe(): () => void {
     return () => undefined;
   }
+  lastAssistantText(): string {
+    return "";
+  }
 }
 
 class FailingPi extends DeterministicPi {

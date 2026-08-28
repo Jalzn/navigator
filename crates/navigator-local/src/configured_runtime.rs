@@ -54,7 +54,7 @@ impl Default for ConfiguredRuntimeSettings {
     fn default() -> Self {
         Self {
             operation_capacity: 4,
-            report_deadline: Duration::from_secs(90),
+            report_deadline: Duration::from_secs(600),
             mailbox_lease: Duration::from_secs(10),
             driver_call_timeout: Duration::from_secs(5),
             delivery_budget: Duration::from_secs(30),
@@ -257,7 +257,7 @@ mod tests {
     fn default_runtime_settings_preserve_the_bounded_production_budget() {
         let settings = ConfiguredRuntimeSettings::default();
         assert_eq!(settings.operation_capacity(), 4);
-        assert_eq!(settings.report_deadline(), Duration::from_secs(90));
+        assert_eq!(settings.report_deadline(), Duration::from_secs(600));
     }
 
     #[test]

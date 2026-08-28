@@ -34,12 +34,13 @@ use navigator_core::{
 };
 use navigator_domain::{
     ApprovalGrant, ApprovalRequest, ApprovalRequestId, ApprovalStatus, ArtifactDigest, ArtifactId,
-    ArtifactMediaType, ArtifactSnapshot, ArtifactState, BoundedBytes, BoundedText, Capability,
-    CompatibilityIdentity, ConsumerKey, EffectProof, EffectProofKind, EventPosition, FencingEpoch,
-    GrantId, HostId, MAX_EFFECT_PROOF_BYTES, MAX_RESOLUTION_REASON_BYTES, MessageId, OperationId,
-    OperationState, OwnershipSnapshot, ParticipantId, RequestId, ResolveUncertaintyDecision,
-    ResourceScope, Revision, ScopedCapability, SessionCompatibilityManifest, SessionEvent,
-    SessionId, SessionSnapshot, SessionStatus, Template, Timestamp, UncertaintyResolution,
+    ArtifactMediaType, ArtifactSnapshot, ArtifactState, AuthorityProfile, BoundedBytes,
+    BoundedText, Capability, CompatibilityIdentity, ConsumerKey, EffectProof, EffectProofKind,
+    EventPosition, FencingEpoch, GrantId, HostId, MAX_EFFECT_PROOF_BYTES,
+    MAX_RESOLUTION_REASON_BYTES, MessageId, OperationId, OperationState, OwnershipSnapshot,
+    ParticipantId, RequestId, ResolveUncertaintyDecision, ResourceScope, Revision,
+    ScopedCapability, SessionCompatibilityManifest, SessionEvent, SessionId, SessionSnapshot,
+    SessionStatus, Template, Timestamp, UncertaintyResolution,
 };
 use navigator_store_api::{
     AcquireOwnership, ApprovalStore, ApproveRequest, ArtifactAccess, ArtifactStore,
@@ -2280,6 +2281,15 @@ impl<S: OperationStore + 'static> LocalNavigator<S> {
         S: AuthorityStore,
     {
         let profile = template.authority().clone();
+        // A root participant has no parent from which authority can be
+        // delegated.  Model that absent ceiling as permitting every capability
+        // already admitted by the root template.  Reusing `profile` here made
+        // active-but-non-delegable root authority impossible: effect checks
+        // require the parent ceiling to permit delegation even though no parent
+        // exists.
+        let root_parent =
+            AuthorityProfile::new(profile.active().cloned(), profile.active().cloned())
+                .map_err(|_| validation_failure(ValidationError::InvalidTemplate))?;
         let template_request = RequestId::from_uuid(derived_uuid(
             b"navigator.root-authority-template.v1",
             &[
@@ -2324,7 +2334,7 @@ impl<S: OperationStore + 'static> LocalNavigator<S> {
                     session_id,
                     participant_id,
                     session: profile.clone(),
-                    parent: profile.clone(),
+                    parent: root_parent,
                     template: profile.clone(),
                     relationship: profile.clone(),
                     subject: profile,
@@ -5860,6 +5870,68 @@ mod host_shutdown_tests {
             input_schema: Some(v1::InputSchema { fields: Vec::new() }),
             authority_profile: None,
         }
+    }
+
+    #[tokio::test]
+    async fn root_session_opens_with_active_non_delegable_authority() {
+        let directory = TempDir::new().unwrap();
+        let store = Arc::new(
+            SqliteStore::open(directory.path().join("root-authority.db"))
+                .await
+                .unwrap(),
+        );
+        let host = HostId::from_uuid(Uuid::from_u128(96_100)).unwrap();
+        let session = SessionId::from_uuid(Uuid::from_u128(96_101)).unwrap();
+        let service = LocalNavigator::new(
+            Arc::clone(&store),
+            host,
+            LeaseDuration::from_millis(30_000).unwrap(),
+        );
+        let negotiation = Uuid::from_u128(96_102);
+        service.negotiations.write().unwrap().insert(
+            negotiation,
+            NegotiationEntry {
+                capabilities: vec!["session.lifecycle.v1".into()],
+                consumer_key: Some(ConsumerKey::new("root-authority").unwrap()),
+                reservation_id: None,
+            },
+        );
+        let mut template = close_test_template();
+        template.authority_profile = Some(v1::AuthorityProfileSpecification {
+            active: vec![v1::ScopedCapabilitySpecification {
+                capability: "repo.read".into(),
+                resource: Some(v1::scoped_capability_specification::Resource::SessionId(
+                    session.as_uuid().as_bytes().to_vec(),
+                )),
+            }],
+            delegable: Vec::new(),
+        });
+
+        let response = NavigatorConsumer::open_session(
+            &service,
+            Request::new(v1::OpenSessionRequest {
+                metadata: Some(current_metadata(
+                    negotiation.as_bytes().to_vec(),
+                    &["session.lifecycle.v1"],
+                )),
+                request_id: Uuid::from_u128(96_103).as_bytes().to_vec(),
+                session_id: session.as_uuid().as_bytes().to_vec(),
+                consumer_key: "root-authority".into(),
+                compatibility_identity: Vec::new(),
+                root_template: Some(template),
+                compatible_templates: Vec::new(),
+                configuration_identity: Vec::new(),
+                mode: v1::SessionOpenMode::Unspecified.into(),
+            }),
+        )
+        .await
+        .unwrap()
+        .into_inner();
+
+        assert!(matches!(
+            response.outcome,
+            Some(open_session_response::Outcome::Snapshot(_))
+        ));
     }
 
     #[tokio::test]

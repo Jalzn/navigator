@@ -206,7 +206,7 @@ where
                 || message.destination != operation.participant_id
                 || message.correlation.operation_id != Some(operation.operation_id)
             {
-                return Err(boundary_error());
+                return Err(boundary_error_at("driver.report.correlation_invalid"));
             }
             let epoch =
                 FencingEpoch::new(instance.identity.ownership_epoch).map_err(executor_error)?;
@@ -225,7 +225,7 @@ where
                 CausalAcceptanceState::Pending if tokio::time::Instant::now() < deadline => {
                     tokio::time::sleep(Duration::from_millis(1)).await;
                 }
-                _ => return Err(boundary_error()),
+                _ => return Err(boundary_error_at("driver.report.acceptance_unproven")),
             }
         }
     }
@@ -464,6 +464,11 @@ impl TrustedToolCatalog {
     #[must_use]
     pub(crate) const fn identity(&self) -> [u8; 32] {
         self.identity
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn entries(&self) -> &serde_json::Value {
+        &self.entries
     }
 }
 
@@ -3126,10 +3131,15 @@ where
         instance: &AuthenticatedDriver,
         operation: &OperationSnapshot,
     ) -> Result<ExecutorReport, ExecutorError> {
-        self.validate_current(operation, instance).await?;
-        let driver = self.driver(operation).await?;
+        self.validate_current(operation, instance)
+            .await
+            .map_err(|_| boundary_error_at("driver.report.current_authority_invalid"))?;
+        let driver = self
+            .driver(operation)
+            .await
+            .map_err(|_| boundary_error_at("driver.report.active_driver_unavailable"))?;
         if instance.identity != driver.identity {
-            return Err(boundary_error());
+            return Err(boundary_error_at("driver.report.active_identity_mismatch"));
         }
         crate::fault_matrix::external_fault_at("report.external.before_call");
         let report = driver.next_report(instance, operation).await;
@@ -3141,37 +3151,43 @@ where
                 Ok(report)
             }
             Err(error) if error.message == "driver.observe.io_failed" => {
-                self.validate_current(operation, instance).await?;
+                self.validate_current(operation, instance)
+                    .await
+                    .map_err(|_| boundary_error_at("driver.observe.reconnect_authority_invalid"))?;
                 let current = self
                     .active
                     .lock()
                     .await
                     .get(&(operation.participant_id, instance.identity.ownership_epoch))
                     .cloned()
-                    .ok_or_else(boundary_error)?;
+                    .ok_or_else(|| boundary_error_at("driver.observe.reconnect_active_missing"))?;
                 if !Arc::ptr_eq(&current, &driver) || current.identity != instance.identity {
                     return Err(boundary_error_at("driver.observe.reconnect_fenced"));
                 }
                 let (origin_channels, replacement_channels) =
                     driver.prepare_reconnected_channels(instance).await?;
-                self.validate_current(operation, instance).await?;
+                self.validate_current(operation, instance)
+                    .await
+                    .map_err(|_| boundary_error_at("driver.observe.reconnect_authority_lost"))?;
                 let launch_attempt = domain_id(
                     &instance.identity.launch_attempt_id,
                     LaunchAttemptId::from_uuid,
-                )?;
+                )
+                .map_err(|_| boundary_error_at("driver.observe.reconnect_attempt_invalid"))?;
                 let launch = self
                     .store
                     .load_launch(launch_attempt)
                     .await
                     .map_err(executor_error)?;
-                validate_supervised_identity(&instance.identity, &launch)?;
+                validate_supervised_identity(&instance.identity, &launch)
+                    .map_err(|_| boundary_error_at("driver.observe.reconnect_identity_invalid"))?;
                 let current = self
                     .active
                     .lock()
                     .await
                     .get(&(operation.participant_id, instance.identity.ownership_epoch))
                     .cloned()
-                    .ok_or_else(boundary_error)?;
+                    .ok_or_else(|| boundary_error_at("driver.observe.reconnect_publish_missing"))?;
                 if !Arc::ptr_eq(&current, &driver) || current.identity != instance.identity {
                     return Err(boundary_error_at("driver.observe.reconnect_fenced"));
                 }
@@ -3377,13 +3393,13 @@ where
             let delivery_attempt_id = instance
                 .pending_report
                 .lock()
-                .map_err(|_| boundary_error())?
+                .map_err(|_| boundary_error_at("driver.report.pending_read_poisoned"))?
                 .as_ref()
                 .filter(|pending| {
                     pending.operation_id == operation_id && pending.message_id == message_id
                 })
                 .map(|pending| pending.delivery_attempt_id)
-                .ok_or_else(boundary_error)?;
+                .ok_or_else(|| boundary_error_at("driver.report.pending_identity_missing"))?;
             if let Err(error) = self
                 .accepted_causal_message(
                     operation,
@@ -4152,21 +4168,25 @@ impl DriverExecutor {
         instance: &AuthenticatedDriver,
         operation: &OperationSnapshot,
     ) -> Result<ExecutorReport, ExecutorError> {
-        validate_binding(&instance.identity, operation)?;
+        validate_binding(&instance.identity, operation)
+            .map_err(|_| boundary_error_at("driver.report.binding_invalid"))?;
         loop {
-            let after = *instance.sequence.lock().map_err(|_| boundary_error())?;
+            let after = *instance
+                .sequence
+                .lock()
+                .map_err(|_| boundary_error_at("driver.report.sequence_poisoned"))?;
             let client = Arc::clone(
                 &instance
                     .channels
                     .read()
-                    .map_err(|_| boundary_error())?
+                    .map_err(|_| boundary_error_at("driver.report.channels_poisoned"))?
                     .observe,
             );
             let identity = instance.identity.clone();
             let observation = spawn_blocking(move || {
                 client
                     .lock()
-                    .map_err(|_| boundary_error())?
+                    .map_err(|_| boundary_error_at("driver.report.observe_mutex_poisoned"))?
                     .observe_with_timeout(identity, after, DRIVER_OBSERVE_IO_TIMEOUT)
                     .map_err(|error| observe_error(&error))
             })
@@ -4186,43 +4206,53 @@ impl DriverExecutor {
                 return Err(boundary_error_at("driver.observe.identity_failed"));
             }
             let event_id = event.event_id.clone();
-            match event.event.ok_or_else(boundary_error)? {
+            match event
+                .event
+                .ok_or_else(|| boundary_error_at("driver.event.body_missing"))?
+            {
                 v1::driver_event::Event::Ready(_) | v1::driver_event::Event::Acceptance(_) => {
-                    *instance.sequence.lock().map_err(|_| boundary_error())? = event.sequence;
+                    *instance.sequence.lock().map_err(|_| {
+                        boundary_error_at("driver.report.sequence_commit_poisoned")
+                    })? = event.sequence;
                     tokio::time::sleep(Duration::from_millis(1)).await;
                 }
                 v1::driver_event::Event::Disconnected(_) | v1::driver_event::Event::Stopped(_) => {
-                    *instance.sequence.lock().map_err(|_| boundary_error())? = event.sequence;
+                    *instance.sequence.lock().map_err(|_| {
+                        boundary_error_at("driver.report.sequence_commit_poisoned")
+                    })? = event.sequence;
                     return Ok(ExecutorReport::Disconnected);
                 }
                 v1::driver_event::Event::Report(report) => {
                     let delivery_attempt_id =
-                        domain_id(&report.delivery_attempt_id, DeliveryAttemptId::from_uuid)?;
+                        parse_report_delivery_attempt(&report.delivery_attempt_id)?;
                     if let Some(v1::report::Result::Outcome(outcome)) = report.result.as_ref()
                         && outcome.kind == v1::ReportKind::Question as i32
                     {
-                        let operation_id = parse_operation(&report.operation_id)?;
-                        let delivered_message_id = parse_message(&report.message_id)?;
+                        let operation_id = parse_operation(&report.operation_id)
+                            .map_err(|_| boundary_error_at("driver.question.operation_invalid"))?;
+                        let delivered_message_id = parse_message(&report.message_id)
+                            .map_err(|_| boundary_error_at("driver.question.message_invalid"))?;
                         if operation_id != operation.operation_id {
-                            return Err(boundary_error());
+                            return Err(boundary_error_at("driver.question.operation_mismatch"));
                         }
                         let code = Capability::new(
                             std::str::from_utf8(&outcome.payload)
-                                .map_err(|_| boundary_error())?
+                                .map_err(|_| boundary_error_at("driver.question.payload_utf8"))?
                                 .to_owned(),
                         )
-                        .map_err(|_| boundary_error())?;
+                        .map_err(|_| boundary_error_at("driver.question.capability_invalid"))?;
                         *instance
                             .pending_report
                             .lock()
-                            .map_err(|_| boundary_error())? = Some(PendingReport {
-                            event_id,
-                            sequence: event.sequence,
-                            operation_id,
-                            message_id: delivered_message_id,
-                            delivery_attempt_id,
-                            request: Some(PendingRequest::Question(code)),
-                        });
+                            .map_err(|_| boundary_error_at("driver.question.pending_poisoned"))? =
+                            Some(PendingReport {
+                                event_id,
+                                sequence: event.sequence,
+                                operation_id,
+                                message_id: delivered_message_id,
+                                delivery_attempt_id,
+                                request: Some(PendingRequest::Question(code)),
+                            });
                         return Ok(ExecutorReport::Waiting {
                             operation_id,
                             message_id: delivered_message_id,
@@ -4231,36 +4261,45 @@ impl DriverExecutor {
                     if let Some(v1::report::Result::ApprovalRequest(request)) =
                         report.result.as_ref()
                     {
-                        let operation_id = parse_operation(&report.operation_id)?;
-                        let delivered_message_id = parse_message(&report.message_id)?;
+                        let operation_id = parse_operation(&report.operation_id)
+                            .map_err(|_| boundary_error_at("driver.approval.operation_invalid"))?;
+                        let delivered_message_id = parse_message(&report.message_id)
+                            .map_err(|_| boundary_error_at("driver.approval.message_invalid"))?;
                         if operation_id != operation.operation_id {
-                            return Err(boundary_error());
+                            return Err(boundary_error_at("driver.approval.operation_mismatch"));
                         }
-                        let expires_at = request.expires_at.as_ref().ok_or_else(boundary_error)?;
+                        let expires_at = request
+                            .expires_at
+                            .as_ref()
+                            .ok_or_else(|| boundary_error_at("driver.approval.expiry_missing"))?;
                         let approval = AuthenticatedApprovalRequest {
-                            capability: Capability::new(request.capability.clone())
-                                .map_err(|_| boundary_error())?,
-                            resource: ApprovalResource::new(&request.resource)
-                                .map_err(|_| boundary_error())?,
-                            summary: ApprovalSummary::new(request.summary.clone())
-                                .map_err(|_| boundary_error())?,
+                            capability: Capability::new(request.capability.clone()).map_err(
+                                |_| boundary_error_at("driver.approval.capability_invalid"),
+                            )?,
+                            resource: ApprovalResource::new(&request.resource).map_err(|_| {
+                                boundary_error_at("driver.approval.resource_invalid")
+                            })?,
+                            summary: ApprovalSummary::new(request.summary.clone()).map_err(
+                                |_| boundary_error_at("driver.approval.summary_invalid"),
+                            )?,
                             expires_at: Timestamp::new(
                                 expires_at.unix_seconds,
                                 expires_at.nanoseconds,
                             )
-                            .map_err(|_| boundary_error())?,
+                            .map_err(|_| boundary_error_at("driver.approval.expiry_invalid"))?,
                         };
                         *instance
                             .pending_report
                             .lock()
-                            .map_err(|_| boundary_error())? = Some(PendingReport {
-                            event_id,
-                            sequence: event.sequence,
-                            operation_id,
-                            message_id: delivered_message_id,
-                            delivery_attempt_id,
-                            request: Some(PendingRequest::Approval(approval)),
-                        });
+                            .map_err(|_| boundary_error_at("driver.approval.pending_poisoned"))? =
+                            Some(PendingReport {
+                                event_id,
+                                sequence: event.sequence,
+                                operation_id,
+                                message_id: delivered_message_id,
+                                delivery_attempt_id,
+                                request: Some(PendingRequest::Approval(approval)),
+                            });
                         return Ok(ExecutorReport::Waiting {
                             operation_id,
                             message_id: delivered_message_id,
@@ -4268,25 +4307,29 @@ impl DriverExecutor {
                     }
                     let mapped = map_report(report)?;
                     if !report_matches(&mapped, operation) {
-                        return Err(boundary_error());
+                        return Err(boundary_error_at("driver.report.operation_mismatch"));
                     }
-                    let (operation_id, message_id) =
-                        report_identity(&mapped).ok_or_else(boundary_error)?;
+                    let (operation_id, message_id) = report_identity(&mapped)
+                        .ok_or_else(|| boundary_error_at("driver.report.identity_missing"))?;
                     *instance
                         .pending_report
                         .lock()
-                        .map_err(|_| boundary_error())? = Some(PendingReport {
-                        event_id,
-                        sequence: event.sequence,
-                        operation_id,
-                        message_id,
-                        delivery_attempt_id,
-                        request: None,
-                    });
+                        .map_err(|_| boundary_error_at("driver.report.pending_poisoned"))? =
+                        Some(PendingReport {
+                            event_id,
+                            sequence: event.sequence,
+                            operation_id,
+                            message_id,
+                            delivery_attempt_id,
+                            request: None,
+                        });
                     return Ok(mapped);
                 }
                 v1::driver_event::Event::HierarchyCommand(command) => {
-                    let sink = self.hierarchy_sink.as_ref().ok_or_else(boundary_error)?;
+                    let sink = self
+                        .hierarchy_sink
+                        .as_ref()
+                        .ok_or_else(|| boundary_error_at("driver.hierarchy.sink_missing"))?;
                     let hierarchy_request_id = command.request_id.clone();
                     let result = sink
                         .handle(hierarchy_caller(&instance.identity, self.host_id)?, command)
@@ -4296,7 +4339,7 @@ impl DriverExecutor {
                         &instance
                             .channels
                             .read()
-                            .map_err(|_| boundary_error())?
+                            .map_err(|_| boundary_error_at("driver.hierarchy.channels_poisoned"))?
                             .control,
                     );
                     let identity = instance.identity.clone();
@@ -4305,7 +4348,7 @@ impl DriverExecutor {
                     spawn_blocking(move || {
                         client
                             .lock()
-                            .map_err(|_| boundary_error())?
+                            .map_err(|_| boundary_error_at("driver.hierarchy.control_poisoned"))?
                             .hierarchy_result(
                                 response_request_id,
                                 identity,
@@ -4317,10 +4360,15 @@ impl DriverExecutor {
                     .await
                     .map_err(|_| boundary_error_at("driver.hierarchy.ack_join_failed"))?
                     .map_err(|_| boundary_error_at("driver.hierarchy.ack_failed"))?;
-                    *instance.sequence.lock().map_err(|_| boundary_error())? = event.sequence;
+                    *instance.sequence.lock().map_err(|_| {
+                        boundary_error_at("driver.hierarchy.sequence_commit_poisoned")
+                    })? = event.sequence;
                 }
                 v1::driver_event::Event::ToolCommand(command) => {
-                    if parse_operation(&command.operation_id)? != operation.operation_id {
+                    if parse_operation(&command.operation_id)
+                        .map_err(|_| boundary_error_at("driver.tool.operation_malformed"))?
+                        != operation.operation_id
+                    {
                         return Err(boundary_error_at("tool.operation.invalid"));
                     }
                     let tool_request_id = command.request_id.clone();
@@ -4337,7 +4385,7 @@ impl DriverExecutor {
                         &instance
                             .channels
                             .read()
-                            .map_err(|_| boundary_error())?
+                            .map_err(|_| boundary_error_at("driver.tool.channels_poisoned"))?
                             .control,
                     );
                     let identity = instance.identity.clone();
@@ -4347,7 +4395,7 @@ impl DriverExecutor {
                     spawn_blocking(move || {
                         client
                             .lock()
-                            .map_err(|_| boundary_error())?
+                            .map_err(|_| boundary_error_at("driver.tool.control_poisoned"))?
                             .tool_result(response_request_id, identity, tool_request_id, result)
                             .map_err(executor_error)
                     })
@@ -4357,10 +4405,14 @@ impl DriverExecutor {
                     let mut correlations = self
                         .tool_correlations
                         .lock()
-                        .map_err(|_| boundary_error())?;
+                        .map_err(|_| boundary_error_at("driver.tool.correlations_poisoned"))?;
                     correlations.guard.forget(&completed_tool_request_id);
                     correlations.results.remove(&completed_tool_request_id);
-                    *instance.sequence.lock().map_err(|_| boundary_error())? = event.sequence;
+                    *instance
+                        .sequence
+                        .lock()
+                        .map_err(|_| boundary_error_at("driver.tool.sequence_commit_poisoned"))? =
+                        event.sequence;
                 }
             }
         }
@@ -4371,7 +4423,8 @@ impl DriverExecutor {
         instance: &AuthenticatedDriver,
         operation: &OperationSnapshot,
     ) -> Result<(), ExecutorError> {
-        validate_binding(&instance.identity, operation)?;
+        validate_binding(&instance.identity, operation)
+            .map_err(|_| boundary_error_at("driver.remind.binding_invalid"))?;
         let client = Arc::clone(&self.channel_pair()?.control);
         let identity = instance.identity.clone();
         let request_id = derived_id(
@@ -4383,12 +4436,12 @@ impl DriverExecutor {
         spawn_blocking(move || {
             client
                 .lock()
-                .map_err(|_| boundary_error())?
+                .map_err(|_| boundary_error_at("driver.remind.control_poisoned"))?
                 .reminder(identity, request_id, operation_id, message_id)
                 .map_err(executor_error)
         })
         .await
-        .map_err(|_| boundary_error())??;
+        .map_err(|_| boundary_error_at("driver.remind.join_failed"))??;
         Ok(())
     }
 }
@@ -4432,12 +4485,19 @@ fn validate_supervised_identity(
 }
 
 fn map_report(report: v1::Report) -> Result<ExecutorReport, ExecutorError> {
-    let operation_id = parse_operation(&report.operation_id)?;
-    let message_id = parse_message(&report.message_id)?;
-    match report.result.ok_or_else(boundary_error)? {
+    let operation_id = parse_operation(&report.operation_id)
+        .map_err(|_| boundary_error_at("driver.report.operation_invalid"))?;
+    let message_id = parse_message(&report.message_id)
+        .map_err(|_| boundary_error_at("driver.report.message_invalid"))?;
+    match report
+        .result
+        .ok_or_else(|| boundary_error_at("driver.report.result_missing"))?
+    {
         // Approval requests are handled by the authenticated pending-report
         // path and must never be interpreted as an ordinary outcome.
-        v1::report::Result::ApprovalRequest(_) => Err(boundary_error()),
+        v1::report::Result::ApprovalRequest(_) => {
+            Err(boundary_error_at("driver.report.approval_misrouted"))
+        }
         v1::report::Result::Failure(_) => Ok(ExecutorReport::Terminal {
             operation_id,
             message_id,
@@ -4447,13 +4507,17 @@ fn map_report(report: v1::Report) -> Result<ExecutorReport, ExecutorError> {
             },
         }),
         v1::report::Result::Outcome(outcome) => {
-            match v1::ReportKind::try_from(outcome.kind).map_err(|_| boundary_error())? {
+            match v1::ReportKind::try_from(outcome.kind)
+                .map_err(|_| boundary_error_at("driver.report.kind_invalid"))?
+            {
                 v1::ReportKind::Progress => Ok(ExecutorReport::Progress {
                     operation_id,
                     message_id,
                     payload: outcome.payload,
                 }),
-                v1::ReportKind::Question | v1::ReportKind::Unspecified => Err(boundary_error()),
+                v1::ReportKind::Question | v1::ReportKind::Unspecified => {
+                    Err(boundary_error_at("driver.report.kind_misrouted"))
+                }
                 v1::ReportKind::Succeeded => Ok(ExecutorReport::Terminal {
                     operation_id,
                     message_id,
@@ -4489,6 +4553,11 @@ fn map_report(report: v1::Report) -> Result<ExecutorReport, ExecutorError> {
             }
         }
     }
+}
+
+fn parse_report_delivery_attempt(bytes: &[u8]) -> Result<DeliveryAttemptId, ExecutorError> {
+    domain_id(bytes, DeliveryAttemptId::from_uuid)
+        .map_err(|_| boundary_error_at("driver.report.delivery_attempt_invalid"))
 }
 
 fn report_matches(report: &ExecutorReport, operation: &OperationSnapshot) -> bool {
@@ -4539,7 +4608,7 @@ fn acknowledge_pending_report(
     let mut pending = instance
         .pending_report
         .lock()
-        .map_err(|_| boundary_error())?;
+        .map_err(|_| boundary_error_at("driver.report.pending_discard_poisoned"))?;
     let mut sequence = instance.sequence.lock().map_err(|_| boundary_error())?;
     commit_pending_report(&mut pending, &mut sequence, operation_id, message_id)
 }
@@ -4578,7 +4647,7 @@ fn commit_pending_report(
         || value.event_id.len() != 16
         || value.sequence < *sequence
     {
-        return Err(boundary_error());
+        return Err(boundary_error_at("driver.report.pending_commit_invalid"));
     }
     *sequence = value.sequence;
     *pending = None;
@@ -5833,6 +5902,58 @@ mod report_cursor_tests {
         assert_eq!(sequence, 7);
         assert!(pending.is_none());
         commit_pending_report(&mut pending, &mut sequence, operation, message).unwrap();
+    }
+
+    #[test]
+    fn malformed_reports_preserve_the_exact_authenticated_boundary_stage() {
+        let operation = Uuid::from_u128(506).as_bytes().to_vec();
+        let message = Uuid::from_u128(507).as_bytes().to_vec();
+        let attempt = Uuid::from_u128(508).as_bytes().to_vec();
+        let missing = map_report(v1::Report {
+            operation_id: operation.clone(),
+            message_id: message.clone(),
+            delivery_attempt_id: attempt.clone(),
+            result: None,
+        })
+        .unwrap_err();
+        assert_eq!(missing.message, "driver.report.result_missing");
+        let invalid = map_report(v1::Report {
+            operation_id: operation,
+            message_id: message,
+            delivery_attempt_id: attempt,
+            result: Some(v1::report::Result::Outcome(v1::ReportOutcome {
+                kind: i32::MAX,
+                payload: Vec::new(),
+            })),
+        })
+        .unwrap_err();
+        assert_eq!(invalid.message, "driver.report.kind_invalid");
+        let invalid_operation = map_report(v1::Report {
+            operation_id: vec![0; 15],
+            message_id: Uuid::from_u128(509).as_bytes().to_vec(),
+            delivery_attempt_id: Vec::new(),
+            result: Some(v1::report::Result::Outcome(v1::ReportOutcome {
+                kind: v1::ReportKind::Succeeded as i32,
+                payload: Vec::new(),
+            })),
+        })
+        .unwrap_err();
+        assert_eq!(invalid_operation.message, "driver.report.operation_invalid");
+        let invalid_message = map_report(v1::Report {
+            operation_id: Uuid::from_u128(510).as_bytes().to_vec(),
+            message_id: vec![0; 15],
+            delivery_attempt_id: Vec::new(),
+            result: Some(v1::report::Result::Outcome(v1::ReportOutcome {
+                kind: v1::ReportKind::Succeeded as i32,
+                payload: Vec::new(),
+            })),
+        })
+        .unwrap_err();
+        assert_eq!(invalid_message.message, "driver.report.message_invalid");
+        assert_eq!(
+            parse_report_delivery_attempt(&[0; 15]).unwrap_err().message,
+            "driver.report.delivery_attempt_invalid"
+        );
     }
 
     #[test]

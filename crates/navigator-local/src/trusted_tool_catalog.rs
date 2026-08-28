@@ -517,6 +517,11 @@ mod tests {
             std::slice::from_ref(&first_registration),
         )
         .unwrap();
+        assert_eq!(base.entries().as_array().unwrap().len(), 1);
+        assert_eq!(
+            base.entries()[0]["name"],
+            serde_json::json!("Records.Lookup")
+        );
         let exact = build_catalog(
             session_id,
             participant_id,
@@ -554,5 +559,46 @@ mod tests {
         for changed in [operation_changed, policy_changed, registrations_changed] {
             assert_ne!(base.identity(), changed.identity());
         }
+    }
+
+    #[test]
+    fn session_scoped_registered_tool_appears_and_authorizes_operation_invocation() {
+        let session_id = SessionId::from_uuid(Uuid::from_u128(60)).unwrap();
+        let participant_id = ParticipantId::from_uuid(Uuid::from_u128(61)).unwrap();
+        let operation_id = operation(62);
+        let policy = policy(session_id, participant_id, false);
+        let registration = registration(session_id, 63);
+
+        let catalog = build_catalog(
+            session_id,
+            participant_id,
+            Some(operation_id),
+            &policy,
+            std::slice::from_ref(&registration),
+        )
+        .unwrap();
+        assert_eq!(catalog.entries().as_array().unwrap().len(), 1);
+
+        let requested = ScopedCapability::new(
+            registration.definition.required_authority().clone(),
+            ResourceScope::Operation(operation_id),
+        );
+        assert!(
+            AuthorityCeilings {
+                session: &policy.session,
+                parent: &policy.parent,
+                template: &policy.template,
+                relationship: &policy.relationship,
+                subject: &policy.subject,
+            }
+            .authorize_effect(
+                participant_id,
+                session_id,
+                &requested,
+                None,
+                Timestamp::new(0, 0).unwrap(),
+            )
+            .is_ok()
+        );
     }
 }

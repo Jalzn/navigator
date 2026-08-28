@@ -2,8 +2,9 @@ use std::{collections::BTreeSet, path::PathBuf, sync::Arc, time::Duration};
 
 use clap::Parser;
 use navigator_local::{
-    BootstrapCredential, DriverCatalogError, LocalArtifactStore, LocalNavigator, ServerConfig,
-    TrustedDriverCatalog, build_catalog_runtime_components, load_or_create_host_id, serve,
+    BootstrapCredential, ConfiguredRuntimeSettings, DriverCatalogError, LocalArtifactStore,
+    LocalNavigator, ServerConfig, TrustedDriverCatalog,
+    build_catalog_runtime_components_with_settings, load_or_create_host_id, serve,
     validate_socket_directory,
 };
 use navigator_store_api::LeaseDuration;
@@ -12,6 +13,7 @@ use tokio::sync::watch;
 
 const DEFAULT_SHUTDOWN_TIMEOUT_MS: u64 = 10_000;
 const MIN_CONFIGURED_RUNTIME_SHUTDOWN_MS: u64 = 5_100;
+const DEFAULT_OPERATION_REPORT_DEADLINE_MS: u64 = 600_000;
 
 const fn configured_runtime_deadline_valid(timeout_ms: u64) -> bool {
     timeout_ms >= MIN_CONFIGURED_RUNTIME_SHUTDOWN_MS
@@ -29,6 +31,9 @@ struct Args {
     lease_ms: u64,
     #[arg(long, default_value_t = DEFAULT_SHUTDOWN_TIMEOUT_MS)]
     shutdown_timeout_ms: u64,
+    /// Maximum time for one operation to produce its terminal report.
+    #[arg(long, default_value_t = DEFAULT_OPERATION_REPORT_DEADLINE_MS)]
+    operation_report_deadline_ms: u64,
     /// Trusted JSON Driver catalog. Omission keeps execution fail-closed.
     #[arg(long, requires = "driver_entry")]
     driver_catalog: Option<PathBuf>,
@@ -93,12 +98,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .driver_runtime
             .clone()
             .unwrap_or_else(|| args.database.with_extension("driver-runtime"));
-        let runtime = build_catalog_runtime_components(
+        let settings = ConfiguredRuntimeSettings::new(
+            4,
+            Duration::from_millis(args.operation_report_deadline_ms),
+        )?;
+        let runtime = build_catalog_runtime_components_with_settings(
             store.clone(),
             host_id,
             catalog,
             allowed_profiles,
             runtime_root,
+            settings,
         )?;
         let inspector = Arc::clone(&runtime.recovery_inspector);
         let recovery_scheduler = Arc::clone(&runtime.permit_scheduler);
@@ -157,6 +167,10 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(args.shutdown_timeout_ms, DEFAULT_SHUTDOWN_TIMEOUT_MS);
+        assert_eq!(
+            args.operation_report_deadline_ms,
+            DEFAULT_OPERATION_REPORT_DEADLINE_MS
+        );
         assert!(
             Duration::from_millis(args.shutdown_timeout_ms)
                 > Duration::from_secs(2) + Duration::from_secs(2) + Duration::from_millis(100)
@@ -168,5 +182,18 @@ mod tests {
         assert!(configured_runtime_deadline_valid(
             MIN_CONFIGURED_RUNTIME_SHUTDOWN_MS
         ));
+        let short = Args::try_parse_from([
+            "navigatord",
+            "--database",
+            "/tmp/navigator-test.db",
+            "--socket",
+            "/tmp/navigator-test.sock",
+            "--credential-file",
+            "/tmp/navigator-test.credential",
+            "--operation-report-deadline-ms",
+            "250",
+        ])
+        .unwrap();
+        assert_eq!(short.operation_report_deadline_ms, 250);
     }
 }
